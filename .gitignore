@@ -1,0 +1,6 @@
+/games/
+/build/
+/saves/
+/ZXQUEST.CFG
+*.pyc
+__pycache__/

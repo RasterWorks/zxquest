@@ -89,36 +89,35 @@ static void seek(agi_vm *v, agi_logic_frame *f, uint16_t target) {
     else v->window_size=v->window_pos=0;
     f->pc=target;
 }
-static uint8_t jump(agi_vm *v, agi_logic_frame *f, int32_t delta) {
-    int32_t target=(int32_t)f->pc+delta;
-    if(target<2 || target>=f->end) return VM_BRANCH;
-    seek(v,f,(uint16_t)target); return VM_DONE;
+static uint8_t forward(agi_vm *v, agi_logic_frame *f, uint16_t delta) {
+    if(delta>=f->end-f->pc) return VM_BRANCH;
+    seek(v,f,f->pc+delta); return VM_DONE;
+}
+static uint8_t jump(agi_vm *v, agi_logic_frame *f, uint16_t delta) {
+    /* Signed goto, without expensive 32-bit arithmetic on the Z80.
+       IF uses forward() separately: its length is unsigned. */
+    if(!(delta&0x8000))return forward(v,f,delta);
+    delta=0-delta;
+    if(delta>f->pc-2)return VM_BRANCH;
+    seek(v,f,f->pc-delta);return VM_DONE;
 }
 static uint8_t condition(agi_vm *v, agi_logic_frame *f, uint8_t op) {
-    uint8_t p[5],r,value=0,active;
+    uint8_t scratch[5],r,value=0,active,count;const uint8_t *p=scratch;
     uint16_t at=0,n;
-    if(op==0xfd) { v->negate^=1; return VM_DONE; }
-    if(op==0xfc) {
-        if(v->negate) return VM_TEST;
-        if(v->in_or) { v->and_value &= v->or_value; v->in_or=0; }
-        else { v->in_or=1; v->or_value=0; }
-        return VM_DONE;
-    }
-    if(op==0xff) {
-        if(v->negate || v->in_or) return VM_TEST;
-        r=operands(v,f,p,2); if(r) return r;
-        n=(uint16_t)p[0] | ((uint16_t)p[1]<<8);
-        v->in_if=0;
-        /* IF skip lengths are unsigned; goto displacements are signed. */
-        return v->and_value ? VM_DONE : jump(v,f,(int32_t)n);
-    }
     if(!op || op>18) return VM_TEST;
     if(op==14) {
-        r=byte(v,f,p); if(r) return r;
+        r=byte(v,f,scratch); if(r) return r;
         at=f->pc; n=(uint16_t)p[0]*2;
         if(n>f->end-at) return VM_TRUNCATED;
         seek(v,f,at+n);
-    } else { r=operands(v,f,p,test_args[op]); if(r) return r; }
+    } else {
+        count=test_args[op];
+        /* The window is resident and remains valid across host tests.
+           Decode in place; only split-window operands need a copy. */
+        if(count<=v->window_size-v->window_pos){
+            p=v->window+v->window_pos;v->window_pos+=count;f->pc+=count;
+        }else{r=operands(v,f,scratch,count);if(r)return r;}
+    }
     active=v->and_value && (!v->in_or || !v->or_value);
     if(active) {
         switch(op) {
@@ -131,6 +130,11 @@ static uint8_t condition(agi_vm *v, agi_logic_frame *f, uint8_t op) {
         case 7: value=agi_vm_flag(v,p[0]); break;
         case 8: value=agi_vm_flag(v,v->vars[p[0]]); break;
         default:
+#ifdef AGI_RUNTIME
+            /* Standard AGI said eligibility, before crossing two bank gates.
+               Generic VM users retain unrestricted test callbacks. */
+            if(op==14 && (!(v->flags[0]&4) || (v->flags[0]&16) || v->vars[9]))break;
+#endif
             if(!v->test) return VM_UNSUPPORTED;
             r=v->test(v,op,p,at,&value); if(r) return r;
         }
@@ -185,16 +189,32 @@ uint8_t agi_vm_run(agi_vm *v, uint16_t budget) {
     f=&v->frames[v->depth-1];
     while(budget--) {
         v->logic=f->number; v->pc=f->pc; v->is_test=v->in_if; v->opcode=0;
-        r=byte(v,f,&op); if(r) return finish(v,r);
+        if(v->window_pos<v->window_size){op=v->window[v->window_pos++];++f->pc;}
+        else {r=byte(v,f,&op);if(r)return finish(v,r);}
         v->opcode=op;
-        if(v->in_if) r=condition(v,f,op);
+        if(v->in_if) {
+            /* Structural tokens are common and need no condition stack. */
+            r=VM_DONE;
+            if(op==0xfd)v->negate^=1;
+            else if(op==0xfc){
+                if(v->negate)r=VM_TEST;
+                else if(v->in_or){v->and_value&=v->or_value;v->in_or=0;}
+                else{v->in_or=1;v->or_value=0;}
+            }else if(op==0xff){
+                if(v->negate || v->in_or)r=VM_TEST;
+                else{
+                    r=operands(v,f,p,2);
+                    if(!r){v->in_if=0;if(!v->and_value)r=forward(v,f,(uint16_t)p[0]|((uint16_t)p[1]<<8));}
+                }
+            }else r=condition(v,f,op);
+        }
         else if(op==0xff) {
             v->in_if=v->and_value=1; v->in_or=v->or_value=v->negate=0; r=0;
         } else if(op==0xfe) {
             r=operands(v,f,p,2);
             if(!r) {
                 delta=(uint16_t)p[0] | ((uint16_t)p[1]<<8);
-                r=jump(v,f,(int32_t)(int16_t)delta);
+                r=jump(v,f,delta);
             }
         } else if(op>=sizeof(agi_command_args)) r=VM_OPCODE;
         else {

@@ -18,22 +18,24 @@ try {
         Copy-Item -LiteralPath $Source -Destination $Destination
         if((Get-FileHash -LiteralPath $Source).Hash -ne (Get-FileHash -LiteralPath $Destination).Hash){throw "Copy verification failed: $Destination"}
     }
+    Copy-Verified $binary.FullName (Join-Path $bundle 'ZXQUEST.NEX')
     foreach($game in $Games){
         $gameRoot=Join-Path $bundle $game.ToUpperInvariant()
-        $dataRoot=Join-Path $gameRoot "games/$game"
+        $dataRoot=$gameRoot
         New-Item -ItemType Directory -Path $dataRoot -Force | Out-Null
-        Copy-Verified $binary.FullName (Join-Path $gameRoot 'ZXQUEST.NEX')
-        [IO.File]::WriteAllText((Join-Path $gameRoot 'ZXQUEST.CFG'),"games/$game`r`n",[Text.Encoding]::ASCII)
         foreach($name in $required){Copy-Verified "games/$game/$name" (Join-Path $dataRoot $name)}
         $volumes=Get-ChildItem -LiteralPath "games/$game" -File | Where-Object Name -Match '^VOL\.[0-9]+$'
         if(!$volumes){throw "No volumes found for $game"}
         foreach($volume in $volumes){Copy-Verified $volume.FullName (Join-Path $dataRoot $volume.Name)}
-        & "$PSScriptRoot/prepare_saves.ps1" -SdRoot $gameRoot -GameDirectory "games/$game"
-        $saveFolder=Get-ChildItem -LiteralPath (Join-Path $gameRoot 'saves') -Directory
-        $existing=Join-Path 'saves' $saveFolder.Name
-        if(Test-Path -LiteralPath $existing){
-            foreach($save in Get-ChildItem -LiteralPath $existing -File | Where-Object Name -Match '^[1-9]\.[ab]$'){
-                Copy-Verified $save.FullName (Join-Path $saveFolder.FullName $save.Name)
+        $saveInfo=& "$PSScriptRoot/prepare_saves.ps1" -SdRoot $gameRoot -GameDirectory '.' -PassThru
+        # Prefer current flat slots, falling back to either historical location.
+        $sources=@("games/$game/saves","games/$game/saves/$($saveInfo.Identity)","saves/$($saveInfo.Identity)")
+        foreach($slot in 1..9){
+            foreach($existing in $sources){
+                $pair=@('a','b') | ForEach-Object {Join-Path $existing "$slot.$_"} | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf}
+                if(!$pair){continue}
+                foreach($save in $pair){Copy-Verified $save (Join-Path $saveInfo.Directory (Split-Path $save -Leaf))}
+                break
             }
         }
     }
@@ -43,23 +45,25 @@ ZXQUEST - ZX SPECTRUM NEXT HARDWARE TEST
 
 INSTALL AND START
 1. Copy this whole ZXQUEST folder to the SD card, keeping its subfolders.
-2. In the NextZXOS Browser, enter ZXQUEST, then SQ1, KQ1 or PQ1.
-3. Select ZXQUEST.NEX and press Enter.
+2. In the NextZXOS Browser, enter ZXQUEST.
+3. Select ZXQUEST.NEX and press Enter; use arrows and Enter to choose a game.
 
-Open the NEX from inside its game folder: resource/config/save paths are
-relative to that folder. Each game has its own configuration, so no editing
-or PC launch script is needed. SQ1 is the most extensively tested game.
+The launcher finds AGI v2 game folders beside the NEX. One game loads
+automatically. With several games, arrows and Enter select one. Folders under
+games/ and older per-game ZXQUEST.CFG layouts are also supported. A CFG beside
+the NEX explicitly selects a game; remove it or use AUTO for discovery.
 
 CONTENTS OF EACH GAME FOLDER
-ZXQUEST.NEX   Current banked interpreter, identical for all three games.
-ZXQUEST.CFG   Selects that folder's game data.
-games/...    LOGDIR, PICDIR, VIEWDIR, SNDDIR, OBJECT, WORDS.TOK and VOL.n.
-saves/...    Game-specific save folder and copies of existing project saves.
+LOGDIR, PICDIR, VIEWDIR, SNDDIR, OBJECT, WORDS.TOK and VOL.n: original data.
+saves/      Save files directly here, with copies of existing project saves.
 
 The original DOS executables, graphics drivers and emulator plugins are not
 needed. Keep both .a and .b save files: they are the current/previous copies
 of each slot. Hardware saves stay on this SD card; they do not automatically
 sync back to the PC project.
+Old fingerprint-named save folders remain readable. New saves go directly
+into the selected game's saves folder. To flatten old saves yourself, move
+both .a and .b files together, keeping a backup and preserving newer saves.
 
 HARDWARE AND CONTROLS
 Target: ZX Spectrum Next, base 1 MB, NextZXOS. The program selects 28 MHz.

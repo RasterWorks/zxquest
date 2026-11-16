@@ -20,7 +20,11 @@ uint16_t rt_render_profile[5];
 #define sortkey ((uint16_t *)0x6100)
 #define affected ((uint8_t *)0x6300)
 #define controls ((uint8_t *)0x6400)
-#define dirty_rows ((uint8_t *)0x6420)
+/* The collision tick finishes before composition; its $6500 baseline
+   snapshot can be reused here and is rebuilt by the next rt_motion_begin.
+   Keep both arrays below the IRQ-owned sound stream beginning at $6600. */
+#define row_left ((uint8_t *)0x6420)
+#define row_right ((uint8_t *)0x6500)
 static int16_t left,top,right,bottom;
 /* Visibility masks share the parser/text-data overlay. */
 extern void rt_text_mask(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t);
@@ -40,25 +44,58 @@ static void restore_text(void) {
 }
 /* Vertical gaps between independently moving actors need no restoration or
    upload. Every affected actor contributes its full height, so no cel is split. */
-static void include_rows(int16_t first,int16_t end) {
-    uint8_t row,a,b;
-    if(first<0)first=0;if(end>168)end=168;if(end<=first)return;
-    --end;
-    for(row=first>>3;row<=end>>3;++row){a=row==(first>>3)?first&7:0;b=row==(end>>3)?end&7:7;dirty_rows[row]|=(255u<<a)&(255u>>(7-b));}
+static uint8_t include_rows(int16_t first,int16_t end,int16_t lo,int16_t hi) {
+    uint8_t row,changed=0;
+    if(first<0)first=0;if(end>168)end=168;
+    if(lo<0)lo=0;if(hi>160)hi=160;
+    if(end<=first || hi<=lo)return 0;
+    for(row=first;row<end;++row){
+        if(lo<row_left[row]){row_left[row]=lo;changed=1;}
+        if(hi>row_right[row]){row_right[row]=hi;changed=1;}
+    }
+    return changed;
 }
-static uint8_t row_dirty(uint8_t y){return dirty_rows[y>>3]&(1u<<(y&7));}
+static uint8_t row_dirty(uint8_t y){return row_right[y]!=0;}
 static void include_rect(uint8_t x,uint8_t y,uint8_t w,uint8_t h) {
-    int16_t t=(int16_t)y-h+1;
-    if(!w || !h) return;
-    include_rows(t,(int16_t)y+1);
-    if(x<left) left=x; if(t<top) top=t;
-    if((int16_t)x+w>right) right=x+w; if((int16_t)y+1>bottom) bottom=y+1;
+    if(w && h)include_rows((int16_t)y-h+1,(int16_t)y+1,x,(int16_t)x+w);
+}
+/* Join only rows with identical bounds. Joining every touching dirty row
+   widened distant traffic lanes to one large rectangle, then pulled unrelated
+   building control columns into it repeatedly. */
+static uint8_t band_end(uint8_t first,uint8_t merge) {
+    uint8_t end=first+1;
+    left=row_left[first];right=row_right[first];
+    while(end<168 && row_dirty(end)) {
+        if(!merge && (row_left[end]!=left || row_right[end]!=right))break;
+        if(row_left[end]<left)left=row_left[end];if(row_right[end]>right)right=row_right[end];++end;
+    }
+    return end;
+}
+/* Closure owns rt_buffer until composition begins. Cache the geometry of the
+   last control run in each column; actors retain control nibbles, so these
+   boundaries cannot change during closure. Do not cache drawing priorities. */
+#define run_start ((uint8_t *)rt_buffer)
+#define run_end ((uint8_t *)rt_buffer+160)
+static uint8_t control_edge(uint8_t x,uint8_t y,uint8_t lower) {
+    uint8_t first,last;
+    if(y>=run_end[x] || y<run_start[x]) {
+        if(agi_pixel_get((uint16_t)y*160+x)>=0x30)return y+1;
+        first=y;last=y+1;
+        while(first && agi_pixel_get((uint16_t)(first-1)*160+x)<0x30)--first;
+        while(last<168 && agi_pixel_get((uint16_t)last*160+x)<0x30)++last;
+        run_start[x]=first;run_end[x]=last;
+    }
+    if(!lower)return run_start[x];
+    /* Include the first ordinary pixel below the run: its sprite priority
+       controls visibility of pixels above it. */
+    return run_end[x]<168?run_end[x]+1:168;
 }
 uint8_t rt_actor_render(void) {
-    uint16_t id,n=0,i,j,key,started=0; uint8_t r=0,prio,saved,changed,expand,x,y,band,end,minrow,maxrow,bands;int16_t first,last;
+    uint16_t id,n=0,i,j,key,started=0; uint8_t r=0,prio,saved,changed,expand,x,y,band,end,erased=0;int16_t first,last;
     if(!rt.picture_valid) return VM_DONE;
     saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,91);
-    memset(affected,0,256);memset(dirty_rows,0,21);
+    memset(affected,0,256);
+    memset(row_left,160,168);memset(row_right,0,168);
     if(rt.dirty&2) {
         /* Control pixels look down their column for effective priority. A
            changed sprite can affect another sprite along that ray. */
@@ -68,7 +105,6 @@ uint8_t rt_actor_render(void) {
             for(x=0;x<160;++x)if((uint8_t)rt_buffer[x]<0x30)controls[x>>3]|=1u<<(x&7);
         }
     }
-    left=160; top=168; right=bottom=0;
     for(id=0;id<256;++id) {
         if(!rt.occupied[id>>3]){id|=7;continue;}
         if(!(rt.occupied[id>>3]&(1u<<(id&7)))) continue;
@@ -91,55 +127,66 @@ uint8_t rt_actor_render(void) {
             while(j && sortkey[j-1]>key) { order[j]=order[j-1]; sortkey[j]=sortkey[j-1]; --j; }
             order[j]=id; sortkey[j]=key; ++n;
         }
-        if(!(rt_work_actor.flags&ACT_DRAWN) && rt_work_actor.old_drawn){rt_work_actor.old_drawn=0;rt_actor_write(id,&rt_work_actor);}
+        if(!(rt_work_actor.flags&ACT_DRAWN) && rt_work_actor.old_drawn)erased=1;
     }
-    if(right<=left || bottom<=top){rt.dirty=0;goto done;}
-    /* Expand to whole intersecting actors before clearing. This retains
-       transparency/priority ordering without drawing beyond the dirty area. */
+    /* Close the per-row intervals over whole actors and control dependencies.
+       Adjacent rows can keep different widths: restore them all before drawing
+       any actor, so a cel spanning several rectangles is still painted once. */
+    memset(run_end,0,160);
     do {
         expand=0;
         for(i=0;i<n;++i)if(!affected[i]) {
             rt_actor_read(order[i],&rt_work_actor);
-            if(rt_work_actor.x<right && rt_work_actor.x+rt_work_actor.width>left && rt_work_actor.y>=top && (int16_t)rt_work_actor.y-rt_work_actor.height+1<bottom) {
-                affected[i]=1;expand=1;include_rect(rt_work_actor.x,rt_work_actor.y,rt_work_actor.width,rt_work_actor.height);
+            first=(int16_t)rt_work_actor.y-rt_work_actor.height+1;
+            last=(int16_t)rt_work_actor.y+1;if(first<0)first=0;if(last>168)last=168;
+            for(y=first;y<last;++y)if(row_dirty(y) && rt_work_actor.x<row_right[y] && (int16_t)rt_work_actor.x+rt_work_actor.width>row_left[y]) {
+                affected[i]=1;expand=1;include_rect(rt_work_actor.x,rt_work_actor.y,rt_work_actor.width,rt_work_actor.height);break;
             }
         }
-        /* A control run depends only on its first normal pixel below it.
-           Extend through runs touching this rectangle, not the whole column. */
-        for(j=left;j<right && j<160;++j)if(controls[j>>3]&(1u<<(j&7))) {
-            while(top>0 && top<=168 && agi_pixel_get((uint16_t)(top-1)*160+j)<0x30){--top;expand=1;}
-            while(bottom>0 && bottom<168 && agi_pixel_get((uint16_t)(bottom-1)*160+j)<0x30){++bottom;expand=1;}
-        }
-    }while(expand);
-    minrow=top<0?0:top;maxrow=bottom>168?168:bottom;bands=0;x=0;
-    for(y=minrow;y<maxrow;++y){if(row_dirty(y)){if(!x)++bands;x=1;}else x=0;}
-    if(bands<=1)include_rows(top,bottom);
-    /* Preserve dependencies at every band edge, including internal gaps.
-       Control runs use the first normal priority pixel below them. */
-    if(bands>1)do {
-        expand=0;
-        for(band=minrow;band<maxrow;band=end) {
+        for(band=0;band<168;band=end) {
             if(!row_dirty(band)){end=band+1;continue;}
-            for(end=band+1;end<maxrow && row_dirty(end);++end){}
-            first=band;last=end;
-            for(j=left;j<right && j<160;++j)if(controls[j>>3]&(1u<<(j&7))) {
-                while(first>0 && agi_pixel_get((uint16_t)(first-1)*160+j)<0x30)--first;
-                while(last<168 && agi_pixel_get((uint16_t)(last-1)*160+j)<0x30)++last;
+            /* Coalesce the dependency search to bound its bookkeeping. These
+               broad regions select sprites; they are not repaint regions. */
+            end=band_end(band,1);
+            expand|=include_rows(band,end,left,right);
+            for(j=left;j<right;++j)if(controls[j>>3]&(1u<<(j&7))) {
+                first=band?control_edge(j,band-1,0):0;
+                last=end<168?control_edge(j,end-1,1):168;
+                if(first<band)expand|=include_rows(first,band,j,j+1);
+                if(last>end)expand|=include_rows(end,last,j,j+1);
             }
-            if(first!=band || last!=end){include_rows(first,last);expand=1;}
         }
     }while(expand);
-    for(band=minrow;band<maxrow;band=end) {
+    /* Only actors can change the visual pixels. Control rays find dependent
+       actors above/below, but their intervening background is unchanged.
+       Rebuild painting bounds from the selected actors and erased footprints,
+       then restore all regions before drawing each affected actor once. */
+    memset(row_left,160,168);memset(row_right,0,168);
+    if(erased)for(id=0;id<256;++id) {
+        if(!rt.occupied[id>>3]){id|=7;continue;}
+        if(!(rt.occupied[id>>3]&(1u<<(id&7))))continue;
+        rt_actor_read(id,&rt_work_actor);
+        if(!(rt_work_actor.flags&ACT_DRAWN) && rt_work_actor.old_drawn) {
+            include_rect(rt_work_actor.old_x,rt_work_actor.old_y,rt_work_actor.old_w,rt_work_actor.old_h);
+            rt_work_actor.old_drawn=0;rt_actor_write(id,&rt_work_actor);
+        }
+    }
+    for(i=0;i<n;++i)if(affected[i]) {
+        rt_actor_read(order[i],&rt_work_actor);
+        if(rt_work_actor.old_drawn)include_rect(rt_work_actor.old_x,rt_work_actor.old_y,rt_work_actor.old_w,rt_work_actor.old_h);
+        include_rect(rt_work_actor.x,rt_work_actor.y,rt_work_actor.width,rt_work_actor.height);
+    }
+    for(band=0;band<168;band=end) {
         if(!row_dirty(band)){end=band+1;continue;}
-        for(end=band+1;end<maxrow && row_dirty(end);++end){}
-        top=band;bottom=end;
+        end=band_end(band,0);top=band;bottom=end;
         if(rt_profile_on){started=next_clock();rt_render_profile[3]+=right-left;rt_render_profile[4]+=bottom-top;}
         next_scene_restore(left,top,right-left,bottom-top);
-        if(rt_profile_on){rt_render_profile[0]+=next_clock()-started;started=next_clock();}
-        for(i=0;i<n;++i) {
+        if(rt_profile_on)rt_render_profile[0]+=next_clock()-started;
+    }
+    if(rt_profile_on)started=next_clock();
+    for(i=0;i<n;++i) {
             if(!affected[i])continue;
             id=order[i];rt_actor_read(id,&rt_work_actor);
-            if(rt_work_actor.y<top || (int16_t)rt_work_actor.y-rt_work_actor.height+1>=bottom)continue;
             r=next_view_open(&rt_work_view,rt_work_actor.view);if(r){r=VM_IO;goto done;}
             r=agi_view_select(&rt_work_view.source,rt_work_actor.loop,rt_work_actor.cel,&rt_work_cel);
             if(!r)r=agi_view_blit(&rt_work_view.source,&rt_work_cel,rt_work_actor.x,rt_work_actor.y,sortkey[i]>>8);
@@ -147,8 +194,12 @@ uint8_t rt_actor_render(void) {
             rt_work_actor.old_x=rt_work_actor.x;rt_work_actor.old_y=rt_work_actor.y;rt_work_actor.old_w=rt_work_cel.width;rt_work_actor.old_h=rt_work_cel.height;rt_work_actor.old_drawn=1;
             rt_work_actor.old_view=rt_work_actor.view;rt_work_actor.old_loop=rt_work_actor.loop;rt_work_actor.old_cel=rt_work_actor.cel;rt_work_actor.old_priority=sortkey[i]>>8;
             rt_actor_write(id,&rt_work_actor);
-        }
-        if(rt_profile_on){rt_render_profile[1]+=next_clock()-started;started=next_clock();}
+    }
+    if(rt_profile_on)rt_render_profile[1]+=next_clock()-started;
+    for(band=0;band<168;band=end) {
+        if(!row_dirty(band)){end=band+1;continue;}
+        end=band_end(band,0);top=band;bottom=end;
+        if(rt_profile_on)started=next_clock();
         if(rt.gfx && rt.picture_visible){next_show_rect(left,top,right-left,bottom-top,0);restore_text();ZXN_WRITE_REG(0x53,91);}
         if(rt_profile_on)rt_render_profile[2]+=next_clock()-started;
     }

@@ -17,14 +17,26 @@ extern void rt_motion_begin(void);
 static uint8_t select(rt_actor *a) {
     agi_view_info info; uint8_t r=next_view_open(&rt_work_view,a->view);
     if(r) return VM_IO;
-    r=agi_view_inspect(&rt_work_view.source,&info);
-    if(!r) {
+    /* Most updates select a valid cached cel. Only normalize indices when
+       a changed view/loop actually makes them invalid. */
+    r=agi_view_select(&rt_work_view.source,a->loop,a->cel,&rt_work_cel);
+    if(r==VIEW_BAD_INDEX) {
+        r=agi_view_inspect(&rt_work_view.source,&info);
+        if(r){next_view_close(&rt_work_view);return VM_HEADER;}
         if(a->loop>=info.loops) a->loop=0;
         r=agi_view_select(&rt_work_view.source,a->loop,0,&rt_work_cel);
-        if(!r) { if(a->cel>=rt_work_cel.cels) a->cel=0; r=agi_view_select(&rt_work_view.source,a->loop,a->cel,&rt_work_cel); }
+        if(!r) { if(a->cel>=rt_work_cel.cels) a->cel=0; if(a->cel)r=agi_view_select(&rt_work_view.source,a->loop,a->cel,&rt_work_cel); }
     }
     if(!r) { a->width=rt_work_cel.width; a->height=rt_work_cel.height; }
     next_view_close(&rt_work_view); return r ? VM_HEADER : VM_DONE;
+}
+/* Sarien view.c set_cel: a larger cel can extend beyond the picture or
+   horizon. Correct placement before movement, without reporting a border
+   arrival. PQ1 reuses vertical traffic cars at the right-hand entry edge. */
+static void fit_cel(rt_actor *a) {
+    if((uint16_t)a->x+a->width>160){a->x=160-a->width;a->ignore_blocks|=ACT_REPOSITIONED;}
+    if((uint16_t)a->y+1<a->height){a->y=a->height-1;a->ignore_blocks|=ACT_REPOSITIONED;}
+    if(!(a->flags&ACT_IGNORE_HORIZON) && a->y<=rt.horizon){a->y=rt.horizon+1;a->ignore_blocks|=ACT_REPOSITIONED;}
 }
 static void margin_pixel(uint8_t x,uint8_t y,uint8_t priority) {
     uint16_t at=(uint16_t)y*160+x;
@@ -48,11 +60,21 @@ static uint8_t add_picture(uint8_t op,const uint8_t *p) {
     r=agi_view_blit(&rt_work_view.source,&rt_work_cel,x,y,priority);next_view_close(&rt_work_view);
     if(r)return VM_HEADER;
     if(q[6]<4) {
-        band=(y/12)*12+1;
+        /* Include the first row of the baseline's priority band. Leaving
+           it open lets an approaching actor match the stamp's depth before
+           collision, drawing through PQ1's parked cars. Clip to the cel;
+           priority 4 is the single band covering rows 0..47. */
+        band=y<48?0:(y/12)*12;if(band<top)band=top;
         for(i=band;i<=y;++i){margin_pixel(x,i,q[6]);margin_pixel(right,i,q[6]);}
         for(i=x;i<=right;++i){margin_pixel(i,band,q[6]);margin_pixel(i,y,q[6]);}
     }
-    next_scene_capture();rt.dirty|=2;r=rt_actor_render();
+    next_scene_capture();rt.dirty|=2;
+    /* Room scripts can stamp many buildings before show.pic. Keep the clean
+       scene current, but postpone the control-map scan and actor composition
+       until presentation. This also avoids rebuilding hidden actors once per
+       building on PQ1's driving maps. show.pic already forces a full rebuild. */
+    if(!rt.picture_visible)return VM_DONE;
+    r=rt_actor_render();
     if(!r && rt.gfx && rt.picture_visible)next_show_rect(x,top,right-x+1,y-top+1,0);
     return r;
 }
@@ -140,6 +162,7 @@ uint8_t rt_actor_command(uint8_t op,const uint8_t *p) {
     case 0x48: rt_work_actor.cycle=0; rt_work_actor.flags|=ACT_CYCLING; break;
     case 0x49: case 0x4b:
         rt_work_actor.cycle=op==0x49 ? 2 : 3; rt_work_actor.cycle_flag=b;
+        rt_work_actor.ignore_blocks&=~ACT_SUPERSEDED_CYCLE;
         /* One-shot cycles also restart a stop.update object (SQ1's door). */
         rt_work_actor.flags|=ACT_CYCLING|ACT_UPDATE;
         agi_vm_set_flag(&rt_vm,b,0); break;
@@ -175,6 +198,14 @@ uint8_t rt_actor_command(uint8_t op,const uint8_t *p) {
     default: return VM_UNSUPPORTED;
     }
     if(r) return r;
+    if(op>=0x29 && op<=0x30 && op!=0x2d && op!=0x2e)fit_cel(&rt_work_actor);
+    /* Original AGI shares movement parameters with the loop completion flag.
+       Starting move/follow/wander invalidates an active one-shot's old flag.
+       Keep the animation, but suppress its obsolete completion event rather
+       than setting an unrelated flag from the replacement motion parameter.
+       KQ1's condor catch relies on this: flag 144 would cancel the flight. */
+    if(op>=0x51 && op<=0x54 && rt_work_actor.cycle>=2 && (rt_work_actor.flags&ACT_CYCLING))
+        rt_work_actor.ignore_blocks|=ACT_SUPERSEDED_CYCLE;
     if(op==0x28 || op==0x93 || op==0x94) {
         r=rt_actor_fix(id,&rt_work_actor);if(r)return r;rt_work_actor.ignore_blocks|=ACT_REPOSITIONED;
     }
@@ -221,12 +252,14 @@ static uint8_t animate(void) {
                     rt_work_actor.cycle=rt_work_actor.direction=0;
                     /* Completion is one-shot. start.cycling must not fire the
                        old flag again and continually reset script timers. */
-                    agi_vm_set_flag(&rt_vm,rt_work_actor.cycle_flag,1);
+                    if(!(rt_work_actor.ignore_blocks&ACT_SUPERSEDED_CYCLE))
+                        agi_vm_set_flag(&rt_vm,rt_work_actor.cycle_flag,1);
+                    rt_work_actor.ignore_blocks&=~ACT_SUPERSEDED_CYCLE;
                 }
                 changed=1;
             }
         }
-        if(changed) { r=select(&rt_work_actor); if(r) return r; rt.dirty|=1; }
+        if(changed) { r=select(&rt_work_actor); if(r) return r; fit_cel(&rt_work_actor); rt.dirty|=1; }
         rt_actor_write(id,&rt_work_actor);
     }
     return VM_DONE;

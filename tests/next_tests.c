@@ -91,7 +91,7 @@ int main(void) {
     check(decode(no_end,sizeof(no_end)) == PIC_TRUNCATED, "missing terminator rejected");
     check(decode(bad_opcode,sizeof(bad_opcode)) == PIC_BAD_OPCODE, "unknown opcode rejected");
     check(decode(bad_coord,sizeof(bad_coord)) == PIC_BAD_ARGUMENT, "out-of-range coordinate rejected");
-    check(decode(brush,sizeof(brush)) == PIC_UNSUPPORTED_BRUSH, "unsupported brush reported");
+    check(decode(brush,sizeof(brush)) == PIC_OK, "solid brush supported");
     result = resource_load("games/sq1","PICDIR",1,data,1,&length);
     check(result == RES_TOO_LARGE, "resource capacity enforced");
     result = resource_load("games/missing","PICDIR",1,data,sizeof(data),&length);

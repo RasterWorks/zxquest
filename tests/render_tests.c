@@ -5,8 +5,10 @@
 #include "next/runtime.h"
 #include "next/platform.h"
 #include "agi/picture.h"
+#include "agi/view.h"
 static uint8_t file,checks,failures;
-static char report[100];
+/* Reporting runs between engine calls; share its resident staging buffer. */
+#define report rt_buffer
 static const uint16_t table[16]={0,0x1021,0x2042,0x3063,0x4084,0x50a5,0x60c6,0x70e7,0x8108,0x9129,0xa14a,0xb16b,0xc18c,0xd1ad,0xe1ce,0xf1ef};
 static void check(uint8_t ok,const char *name){++checks;if(!ok)++failures;sprintf(report,"%s %s\n",ok?"PASS":"FAIL",name);esx_f_write(file,report,strlen(report));}
 static uint16_t checksum(uint8_t display){
@@ -44,6 +46,27 @@ static void glyphs(void){
     }
     check(ok,"all 96 glyphs including AGI apostrophe and caret match reference");
 }
+/* Independent pixel oracle for the assembly priority/transparency path.
+   Each cel has all 16 colours; vary every priority and transparent colour. */
+static uint8_t blend_data[17];
+extern uint8_t render_test_read(void *,uint16_t,void *,uint16_t);
+static void blends(void){
+    agi_view_source s;agi_view_cel c;uint8_t p,t,x,r,ok=1,bg,expected;
+    memset(&s,0,sizeof(s));s.read=render_test_read;s.context=blend_data;s.length=17;
+    memset(&c,0,sizeof(c));c.width=16;c.height=1;
+    for(x=0;x<16;++x)blend_data[x]=(x<<4)|1;blend_data[16]=0;
+    for(p=0;p<16;++p)for(t=0;t<16;++t){
+        for(x=0;x<16;++x)agi_pixel_write(1600+x,255,((3+x%13)<<4)|7);
+        c.transparent=t;r=agi_view_blit(&s,&c,0,10,p);if(r)ok=0;
+        for(x=0;x<16;++x){bg=((3+x%13)<<4)|7;expected=x!=t && (bg>>4)<=p?(p<<4)|x:bg;if(agi_pixel_get(1600+x)!=expected)ok=0;}
+    }
+    check(ok,"optimized blending matches independent oracle for all priorities and transparent colours");
+    ok=1;c.transparent=15;
+    for(x=0;x<16;++x){agi_pixel_write(1600+x,255,((x%3)<<4)|7);agi_pixel_write(1760+x,255,0x87);}
+    r=agi_view_blit(&s,&c,0,10,9);
+    for(x=0;x<16;++x)if(agi_pixel_get(1600+x)!=(((x%3)<<4)|(x==15?7:x)))ok=0;
+    check(!r && ok,"control-priority fallback preserves control bits and resolves the pixel below");
+}
 static void display_pixels(void){
     uint8_t x,y,p,ok=1,saved=ZXN_READ_REG(0x53);uint8_t *dest;
     for(y=0;y<168;++y)for(x=0;x<160;++x){
@@ -53,11 +76,30 @@ static void display_pixels(void){
     }
     ZXN_WRITE_REG(0x53,saved);check(ok,"rectangle uploads match every packed picture pixel");
 }
+extern uint8_t render_resource_read(void *,uint16_t,void *,uint16_t);
+static void control_runs(void){
+    next_view v;agi_view_source reference;agi_view_cel cel;uint16_t sum=0,y;uint8_t r,pass,p,x,saved,ok=1;
+    r=next_view_open(&v,1);if(r){check(0,"control-run fixture opens");return;}
+    r=agi_view_select(&v.source,0,0,&cel);reference=v.source;reference.read=render_resource_read;
+    saved=ZXN_READ_REG(0x53);
+    for(p=0;p<16 && !r;++p){
+        for(pass=0;pass<2;++pass){
+            agi_picture_clear();
+            for(y=0;y<168;++y)for(x=10;x<10+cel.width;++x)
+                agi_pixel_write(y*160+x,255,((y==80?12:y==84?4:y==86?15:(x+y)%3)<<4)|7);
+            r=agi_view_blit(pass?&v.source:&reference,&cel,10,90,p);
+            if(r || ZXN_READ_REG(0x53)!=saved)ok=0;
+            if(!pass)sum=checksum(0);else if(checksum(0)!=sum)ok=0;
+        }
+    }
+    next_view_close(&v);check(ok && !r,"cached control runs match reference at every priority across multiple runs");
+}
 uint8_t bank_render_tests(void){
-    uint8_t r,saved;uint16_t y;rt_actor a;
+    uint8_t r,saved,guard=1;uint16_t y;rt_actor a;char path[32];
     failures=checks=0;strcpy(report,"build/render-tests.txt");file=esx_f_open(report,ESX_MODE_WRITE|ESX_MODE_OPEN_CREAT_TRUNC);
-    strcpy(report,"build/runtime-fixtures");r=rt_init(report);check(!r,"renderer fixtures initialize");
+    strcpy(path,"build/runtime-fixtures");r=rt_init(path);check(!r,"renderer fixtures initialize");
     if(!r){
+        saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,91);memset((void *)0x6600,0xa5,6656);ZXN_WRITE_REG(0x53,saved);
         agi_picture_clear();next_scene_capture();next_show_picture(0);rt.picture_valid=rt.picture_visible=1;rt.dirty=3;
         actor(0,50,100,8);actor(1,53,105,15);actor(255,145,150,15);compare("initial composition matches full rebuild");
         command(0x25,0,51,101);compare("movement under stationary foreground matches full rebuild");
@@ -76,14 +118,43 @@ uint8_t bank_render_tests(void){
         saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,44);*((uint8_t *)0x6c8c)=0xa7;ZXN_WRITE_REG(0x53,saved);
         command(0x25,0,31,60);command(0x25,255,101,150);r=rt_actor_render();ZXN_WRITE_REG(0x53,44);
         check(!r && *((uint8_t *)0x6c8c)==0xa7,"separated actor bands preserve the untouched vertical gap");ZXN_WRITE_REG(0x53,saved);
+        /* PQ1 buildings carry long control runs between separated traffic
+           lanes. Their columns have no dependency on either moving actor. */
+        rt_actor_reset(1);agi_picture_clear();
+        for(y=0;y<168;++y)agi_pixel_write(y*160+50,0xf0,y<120?0:0x40);
+        next_scene_capture();rt.dirty=3;actor(0,30,60,15);actor(255,100,150,15);rt_actor_render();
+        saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,43);*((uint8_t *)0x648c)=0xa7;ZXN_WRITE_REG(0x53,saved);
+        command(0x25,0,31,60);command(0x25,255,101,150);r=rt_actor_render();ZXN_WRITE_REG(0x53,43);
+        check(!r && *((uint8_t *)0x648c)==0xa7,"separate traffic bands do not redraw unrelated control columns");
+        *((uint8_t *)0x648c)=15;ZXN_WRITE_REG(0x53,saved);
+        compare("separated traffic around control columns matches full rebuild");
+        /* Vertically touching lanes still have independent horizontal bounds.
+           The former band union widened both lanes over this building column. */
+        rt_actor_reset(1);agi_picture_clear();
+        for(y=0;y<168;++y)agi_pixel_write(y*160+50,0xf0,y<120?0:0x40);
+        next_scene_capture();rt.dirty=3;actor(0,30,60,15);rt_actor_read(0,&a);
+        actor(255,100,60+a.height,15);rt_actor_render();
+        saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,43);*((uint8_t *)0x6482)=0xa7;ZXN_WRITE_REG(0x53,saved);
+        command(0x25,0,31,60);command(0x25,255,101,60+a.height);r=rt_actor_render();ZXN_WRITE_REG(0x53,43);
+        check(!r && *((uint8_t *)0x6482)==0xa7,"touching lanes keep different widths without redrawing intervening buildings");
+        *((uint8_t *)0x6482)=15;ZXN_WRITE_REG(0x53,saved);
+        compare("stepped redraw bounds compose whole actors exactly once");
         rt_actor_reset(1);agi_picture_clear();
         for(y=0;y<168;++y)agi_pixel_write(y*160+50,0xf0,y<120?0:0x40);
         next_scene_capture();rt.dirty=3;actor(0,48,80,8);actor(1,48,130,15);compare("control-column composition matches full rebuild");
-        command(0x25,1,60,130);compare("control-column dependency redraw matches full rebuild");
+        saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,43);*((uint8_t *)0x6482)=0xa7;ZXN_WRITE_REG(0x53,saved);
+        command(0x25,1,60,130);r=rt_actor_render();ZXN_WRITE_REG(0x53,43);
+        check(!r && *((uint8_t *)0x6482)==0xa7,"control dependencies update sprites without repainting the background between them");
+        *((uint8_t *)0x6482)=15;ZXN_WRITE_REG(0x53,saved);
+        compare("control-column dependency redraw matches full rebuild");
         /* Replacing a picture must invalidate unchanged actor snapshots. */
         agi_picture_clear();next_scene_capture();rt.dirty=3;compare("new picture recomposes unchanged actors");
         rt_actor_read(0,&a);check(a.old_drawn && a.old_view==a.view && sizeof(a)==32,"actor snapshots fit the existing 32-byte bank stride");
-        glyphs();
+        glyphs();blends();control_runs();
+        saved=ZXN_READ_REG(0x53);ZXN_WRITE_REG(0x53,91);
+        for(y=0x6600;y<0x8000;++y)if(*((uint8_t *)y)!=0xa5){guard=0;break;}
+        if(!guard){sprintf(report,"AUDIO GUARD first=%04x value=%u\n",y,*((uint8_t *)y));esx_f_write(file,report,strlen(report));}
+        ZXN_WRITE_REG(0x53,saved);check(guard,"renderer and control cache preserve the entire private sound stream");
     }
     sprintf(report,"SUMMARY checks=%u failures=%u\n",(unsigned)checks,(unsigned)failures);esx_f_write(file,report,strlen(report));esx_f_close(file);return !failures;
 }

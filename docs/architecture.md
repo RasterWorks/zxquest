@@ -24,7 +24,10 @@
 * `src/main.c`: temporary viewer shell; it will be replaced by engine startup
   and game selection as the interpreter develops.
 
-The game directory is a single `GAME_DIRECTORY` setting, default `games/sq1`.
+The viewer game directory is a `GAME_DIRECTORY` setting, default `games/sq1`.
+The combined runtime discovers game folders beside the NEX and presents a
+picker when more than one is available; an explicit `ZXQUEST.CFG` overrides
+discovery. See [testing.md](testing.md) for folder layouts and save locations.
 The decoder contains no SQ1-specific resource data or room IDs. The viewer
 starts at picture 1 and VIEW 1 for the sprite demonstration; no game LOGIC is
 executed and the viewer controls are not yet connected to engine state.
@@ -41,7 +44,7 @@ lets the game's scripts choose rooms and actors. See [runtime.md](runtime.md).
 | `$6000-$7fff` (MMU3) | Shared window onto display or resource cache; cache calls restore it |
 | `$8000` upward | Code, globals, cache metadata/staging, 4 KB picture buffer, 1 KB fill stack |
 | `$ff00` downward | CPU stack |
-| 8 KB pages 32–35 | 26,880 packed visual/priority pixels, remaining bytes reserved |
+| 8 KB pages 32–35 | 26,880 packed visual/priority pixels; runtime uses page 35 tail for per-blit control-run caches |
 | 8 KB pages 36–39 | Clean picture snapshot for restoring sprite backgrounds |
 | 8 KB pages 40–49 | 80 KB Layer 2 framebuffer (16 KB bank 20 onward) |
 | 8 KB pages 64–87 | 192 KB raw resource cache, 24 independently allocated pages |
@@ -72,8 +75,9 @@ layout, overlay pointer rules and reserved interrupt/stack addresses.
   loop-header mirroring variant, AGI256 and Apple II layouts are not implemented.
   The sprite viewer handles one controlled actor; the runtime has 256 actors,
   sorting, directed/follow/wander movement, collision and cycle timing.
-* Picture commands F0–F8 and the default single-pixel FA brush are supported.
-  Larger/textured brushes produce an explicit unsupported result.
+* Picture commands F0–FA are supported, including F9 brush selection and FA
+  solid/textured circles and squares at all eight sizes. Brush footprints
+  crossing the screen edge are clipped; malformed coordinate pairs still fail.
 * Fill work storage holds 512 pending seeds; overflow is reported.
 * Rendering uses C with span writes and bank-aware display copying. Profiling
   and an initial optimization are recorded in `performance.md`; decoding

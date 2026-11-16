@@ -49,6 +49,14 @@ priority defaults to 4 as in the evaluated Sarien implementation. Priority 3
 `max(4, 1 + y/12)`, capped at 14. Full Sierra interpreter/version compatibility
 is not claimed from these compositor rules alone.
 
+Permanent `add.to.pic` stamps retain their visual/priority pixels in the clean
+scene. Their optional collision rectangle includes the first row of the
+baseline's priority band, clipped to the cel's own height. The minimum-priority
+band covers rows 0–47. Starting the rectangle one row later lets an approaching
+actor reach equal priority and draw through the stamp; PQ1's parked cars expose
+that error. Existing saves contain their already-built collision maps, so leave
+and re-enter a saved room to rebuild those maps after updating the interpreter.
+
 The row compositor compares packed bytes against `(priority << 4) | 15` and
 advances pointers, avoiding repeated per-pixel shifts and array indexing.
 This retains inclusive priority comparisons, transparent pixels and control
@@ -128,7 +136,61 @@ empty vertical bands between affected actors. Every band edge follows control
 priority runs before painting. Sparse actor scans skip empty groups of eight
 IDs while retaining occupied-slot order, including actor 255.
 
+## PQ1 traffic and control-column caching — 16 November 2026
+
+Each dirty vertical band now computes its own horizontal bounds. Actor overlap
+and control-ray expansion iterate to a fixed point over those bands, including
+stationary actors inside each rectangular upload. Unrelated buildings between
+traffic lanes no longer force a large redraw. A full-render pixel comparison
+and a sentinel in an unrelated control column cover this case.
+
+Page 91 holds row-left bounds at `$6420-$64c7` and row-right bounds at
+`$6500-$65a7`. The latter reuse collision baselines only after the collision
+tick has finished; `rt_motion_begin` rebuilds them before the next tick. The
+sound IRQ's private `$6600-$7fff` stream remains untouched. A canary regression
+checks its entire allocation across the renderer suite.
+
+Resource VIEW blits cache the first normal-priority pixel beneath each control
+run, avoiding repeated downward scans through tall buildings. These 160-entry
+end-row/priority arrays occupy `$6900-$699f` and `$6a00-$6a9f` in composite
+picture page 35, above the picture's last byte at `$68ff`. The cache is reset
+for each blit and only used with the immutable resource reader. An uncached
+reader oracle compares all sixteen priorities and multiple control runs.
+All MMU mappings are preserved, including across sound interrupts.
+
+Hidden `add.to.pic` stamps still update the clean scene, but defer actor
+composition/control-map scanning until `show.pic`. Restore forces a control
+cache rebuild: page 91 is derived scratch and is not part of the snapshot.
+
+Cel/loop changes now apply AGI's screen/horizon placement correction before
+movement, following [Sarien's set_cel implementation](https://github.com/cmatsuoka/sarien/blob/master/src/view.c).
+Without this, a reused narrow traffic car turning at the right edge could
+report a false border arrival and take its next diagonal leg from the wrong
+place. The regression uses the original PQ1 traffic VIEW and checks both the
+completion flag and the next movement step.
+
 Run tools/prepare_display_tests.py, then tools/build_banked.ps1 -TestDisplay for
 the original SQ1 keypad/payout scenarios, legacy text metadata, pixel-accurate
 partial occlusion and malformed/warm-cache checks. The parser test variant also
 runs dirty/full-render comparisons and measured corridor workloads.
+
+### Follow-up: dependency bounds and painting bounds
+
+Touching traffic lanes could still widen the dependency search across tall
+control columns. The compositor now uses that conservative search only to
+select dependent actors. After closure, it reconstructs paint bounds from
+their old/new rectangles and erased footprints. Unchanged background between
+dependent sprites no longer needs restoration or upload.
+
+Restoration groups adjacent rows only when their horizontal bounds match.
+All regions are restored first, affected actors are drawn once in global
+priority/baseline order, then the regions and intersecting text are uploaded.
+This avoids clearing parts of a cel after painting it across stepped bounds.
+
+During dependency search, 320 bytes of the existing `rt_buffer` cache the last
+control run's start/end per column. Only geometry is cached, not sprite
+priorities. Actor/pixel reads preserve the buffer; composition reuses it only
+after the cache is no longer needed. No additional RAM pages or snapshot
+fields are required. Regression checks compare partial/full compositions,
+retain sentinels between dependent sprites and touching lanes, and guard the
+entire private sound stream.

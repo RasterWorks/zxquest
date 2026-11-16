@@ -145,25 +145,25 @@ symbols so internal calls stay within its own bank.
 
 | 8 KB page | Contents |
 | --- | --- |
-| 32–35 | Packed visual/priority picture and composited actors |
+| 32–35 | Packed visual/priority picture and composited actors; page 35 tail at `$6900`/`$6a00` holds per-blit control-run caches |
 | 36–39 | Clean background; page 39 tail holds text-occlusion masks and derived cel cache |
 | 40–49 | Layer 2 framebuffer |
 | 50 | LOGIC VM and opcode arities |
-| 51 | Picture decoder, save-slot UI, startup, keyboard labels and joystick input |
+| 51 | Picture decoder, save-slot UI, keyboard labels and joystick input |
 | 52 | Scene operations, clock/key setup, dialogue and menu layout |
 | 53 | Runtime cycle, commands, state access, cold resource loading, LOGIC preload, VIEW setup and cache status |
 | 54 | Actor commands, animation, collision and permanent picture stamps |
 | 55 | Text, menus and character display |
 | 56 | Dictionary, parser, input/status, text-occlusion masks and sound preparation code |
 | 57 | Renderer, inventory, motion or sound regression code, selected by test build |
-| 58–59, 62 | Modal menu/dialogue backing store (first 24 KB) |
+| 58–59, 62 | Modal menu/dialogue backing store (first 24 KB); page 58 holds the temporary game list during startup |
 | 60 | 256 actor records, 32-byte stride |
 | 61 | Persistent text cells/attributes at `$6000–$67ff`; parser `$6800-$6bff`; inventory metadata `$6c00`; modal text `$7000-$72ff`; save-label cache `$7400-$751f`; raw text `$7e00-$7fff` |
 | 63 | Picture input scratch, or final 8 KB of modal backing store |
 | 64–87 | 192 KB resource cache; 32 handles; restore temporarily reserves ten unpinned pages |
 | 88–90 | Integration-test code only |
-| 91 | Actor scratch/baselines at `$6000-$65ff`; private prepared sound at `$6600-$7fff` |
-| 92 | Snapshot storage code |
+| 91 | Actor scratch/baselines at `$6000-$65ff` (renderer row bounds reuse `$6420`/`$6500` after motion); private prepared sound at `$6600-$7fff` |
+| 92 | Snapshot storage and startup/game discovery code |
 | 93 | VIEW decoder, validated cel cache and actor compositor |
 | 94 | Room-transition regression code only |
 | 95 | Scripted movement/follow/wander, OBJECT/inventory and host control dialogs |
@@ -281,3 +281,29 @@ code moved from page 93 to page 90; production controls and sound retain their
 prior mappings. Text visibility helpers share page 56. See view-rendering.md
 for the reserved page-39 tail and save compatibility, and performance.md for
 measured 28 MHz results.
+
+### Game discovery — November 2026
+
+Startup now shares code page 92 with snapshot storage; the game list uses
+6,464 bytes in page 58 until a game loads. Modal backing can reuse that page
+afterwards. The production image ends at `$f6a7` (345 resident bytes free);
+pages 51 and 92 have 680 and 457 free bytes respectively. No expanded RAM is
+required, and no discovery work runs during gameplay.
+
+Without an explicit launch-folder `ZXQUEST.CFG`, startup discovers AGI v2
+resources in the current folder, its immediate children, and children of
+`games/`. It checks the six resource indexes/metadata files and the LOGIC 0
+volume header. A child CFG can identify a legacy folder's nested resources.
+Entries are sorted by folder name; one loads automatically, multiple use an
+arrow/Enter picker. Paths are bounded to 100 characters and the list to 32.
+Overflow displays an error rather than hiding games.
+
+The selected folder becomes the working directory before initialization.
+Direct resource folders use `.`; legacy CFG folders keep their relative
+resource path and existing `saves/` anchor. An explicit top-level CFG retains
+the previous launch-directory behavior; `AUTO` enables discovery.
+
+CSpect 3.3.1's directory API ignores the supplied path and rejects `chdir(".")`.
+Discovery opens the current directory without changing it, and enters an
+existing `games` child only long enough to obtain its directory handle. It
+returns to the launch directory before validating the listed candidates.

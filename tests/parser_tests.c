@@ -5,7 +5,9 @@
 #include "next/runtime.h"
 #include "next/platform.h"
 static uint8_t file,failures,checks,p[7];
-static char path[40],line[140];
+static char path[40];
+/* Reporting runs between engine calls; share its resident staging buffer. */
+#define line rt_buffer
 static void log(const char *s){esx_f_write(file,(void *)s,strlen(s));}
 static void check(uint8_t yes,const char *name){++checks;if(!yes)++failures;sprintf(line,"%s %s\n",yes?"PASS":"FAIL",name);log(line);}
 static uint8_t cmd(uint8_t op,uint8_t a,uint8_t b){memset(p,0,sizeof(p));p[0]=a;p[1]=b;return rt_command(&rt_vm,op,p);}

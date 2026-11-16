@@ -20,7 +20,9 @@ Edit + 5 and + 7 (E5/E7) send F5/F7 (CSpect: Tab, then 5 or 7); see
 
 ## Storage and recovery
 
-Saves live outside game data, in `saves/<game-fingerprint>/`. Each slot has
+Saves live in a `saves` subfolder directly inside the original game's resource
+folder: `SQ1/saves/`, for example. This location is the same for the game picker,
+a per-game NEX, and an explicit CFG. Each slot has
 two files, for example `1.a` and `1.b`. The newest valid generation is used;
 the other file retains the previous save. Writing overwrites only the older
 or invalid generation, then closes and rereads it to check its checksum. A
@@ -30,13 +32,24 @@ filesystem corruption affecting both files.
 
 The game fingerprint is CRC32 of the six directory/dictionary/object files
 (`LOGDIR`, `PICDIR`, `VIEWDIR`, `SNDDIR`, `OBJECT`, `WORDS.TOK`), including their
-lengths. It separates these games and their indexed resource editions. It is
-not a cryptographic identity or a full-volume integrity check.
+lengths. It stays inside the snapshot header to reject saves from another game
+or indexed resource edition. Saving also refuses to overwrite a slot containing
+another game's snapshot. It is not a cryptographic identity or a full-volume
+integrity check. The snapshot format is unchanged by the folder simplification.
+
+For a slot with neither flat file present, descriptions and restores also look
+in `<game>/saves/<fingerprint>/`, then the old launch-folder
+`saves/<fingerprint>/`. Both copies are always taken from the same location.
+An existing flat slot takes precedence, including if damaged, so a bad file
+cannot silently load an unrelated older legacy save. All new writes are flat.
+To migrate manually, back up the saves and move both `.a` and `.b` files into
+the game's `saves` folder. Keep newer destination slots if there is a conflict.
 
 CSpect 3.3.1.0's folder-backed filesystem reported success for `F_MKDIR` without
 creating a directory, and `F_RENAME` failed in the diagnostic probe. The
 launcher therefore runs `tools/prepare_saves.ps1` to create the matching host
-folder. The interpreter also requests directory creation for NextZXOS use.
+folder and copy legacy pairs into empty flat slots, preserving the originals.
+The interpreter also requests directory creation for NextZXOS use.
 The alternating-file design does not require rename or deletion support.
 
 Use `run.ps1 -Runtime` rather than launching the NEX directly on a fresh CSpect
@@ -143,3 +156,24 @@ is already part of the v1 payload. A marker distinguishes older snapshots, whose
 text starts fully visible. Masks preserve partial sprite-overwritten glyphs on
 restore. The derived cel-cache tail is zeroed when saving and invalidated when
 restoring; session-local resource handles cannot be reused from a save file.
+
+## Empty slots after flattening folders — 16 November 2026
+
+NextZXOS can return `ESX_EPATH` when an intermediate save directory is absent.
+The legacy-folder fallback now treats this like `ESX_ENOENT`, intended to leave
+unused descriptions blank rather than showing `[Unavailable]`. Device, permission and
+not-a-directory errors still remain visible. Save format and placement do not
+change.
+
+The isolated save-layout suite covers both error codes, all nine cached labels
+in both dialogs, and genuine error propagation. Its test-only error injection
+is excluded from production. Re-run `tools/prepare_save_tests.py` before the
+suite; it resets diagnostic fixtures without touching player saves.
+
+**Hardware follow-up, 16 November 2026: still open.** The user reports that
+unused slots continue to show `[Unavailable]` in the updated build, but saving
+to and restoring from those slots succeeds. The passing emulator/error-injection
+tests therefore do not reproduce the real label failure. Schedule diagnosis
+for the next correction round: capture the actual path/error returned while
+enumerating labels on NextZXOS and compare it with the successful save/restore
+path. Do not assume every filesystem error means an empty slot.

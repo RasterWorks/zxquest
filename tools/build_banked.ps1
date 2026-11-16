@@ -1,8 +1,9 @@
-param([string]$Z88dkRoot='C:\z88dk', [switch]$TestVM, [switch]$TestRuntime, [switch]$TestParser, [switch]$TestMotion, [switch]$TestInventory, [switch]$TestSound, [switch]$TestSave, [switch]$TestUI, [switch]$TestCloset, [switch]$TestControls, [switch]$TestKerona, [switch]$TestDisplay)
+param([string]$Z88dkRoot='C:\z88dk', [switch]$TestVM, [switch]$TestRuntime, [switch]$TestParser, [switch]$TestMotion, [switch]$TestInventory, [switch]$TestSound, [switch]$TestSave, [switch]$TestUI, [switch]$TestCloset, [switch]$TestControls, [switch]$TestKerona, [switch]$TestDisplay, [switch]$TestKq1, [switch]$TestPq1, [switch]$TestSpeed, [switch]$TestLauncher, [switch]$TestDriving, [switch]$ProfileDriving)
 $ErrorActionPreference='Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
-    if($TestKerona -or $TestDisplay){$TestControls=$true}
+    if($ProfileDriving){$TestDriving=$true}
+    if($TestKerona -or $TestDisplay -or $TestKq1 -or $TestPq1 -or $TestSpeed -or $TestLauncher -or $TestDriving){$TestControls=$true}
     $env:PATH="$Z88dkRoot\bin;$env:PATH"
     $env:ZCCCFG="$Z88dkRoot\lib\config\"
     $variant=if($TestControls){'control-tests'}elseif($TestCloset){'closet-tests'}elseif($TestUI){'ui-tests'}elseif($TestSave){'save-tests'}elseif($TestSound){'sound-tests'}elseif($TestInventory){'inventory-tests'}elseif($TestMotion){'motion-tests'}elseif($TestParser){'parser-tests'}elseif($TestVM){'banked-logic-tests'}elseif($TestRuntime){'runtime-tests'}else{'runtime'}
@@ -57,8 +58,9 @@ try {
             @{file='src/next/runtime_render.c';page=93;rename=@('rt_actor_render','rt_shake')},
             @{file='src/next/runtime_text_mask.c';page=56;rename=@('rt_text_mask')},
             @{file='src/next/runtime_save.c';page=92;rename=@('rt_save_slot','rt_save_description')},
+            @{file='src/next/runtime_save_path.c';page=95;rename=@('rt_save_path')},
             @{file='src/next/runtime_save_ui.c';page=51;rename=@('rt_save_ui')},
-            @{file='src/next/runtime_startup.c';page=51;rename=@('rt_startup')},
+            @{file='src/next/runtime_startup.c';page=92;rename=@('rt_startup')},
             @{file='src/next/runtime_dialog.c';page=52;rename=@('rt_dialog')},
             @{file='src/next/runtime_frame.c';page=52;rename=@('rt_frame')},
             @{file='src/next/runtime_menu.c';page=52;rename=@('rt_menu_draw')},
@@ -69,22 +71,21 @@ try {
             @{file='src/next/runtime_parser.c';page=56;rename=@('rt_parser_init','rt_parser_command','rt_parser_test','rt_parser_key','rt_parser_cycle','rt_parser_word','rt_parser_reset_input','rt_parser_invalidate_display')}
         )
     }
-    if($TestControls){$testFile=if($TestDisplay){'tests/display_tests.c'}elseif($TestKerona){'tests/kerona_tests.c'}else{'tests/control_tests.c'};$units+=@(@{file=$testFile;page=88;rename=@('main=ui_tests_main')})}
+    if($TestControls){$testFile=if($TestDriving){'tests/driving_tests.c'}elseif($TestLauncher){'tests/launcher_tests.c'}elseif($TestSpeed){'tests/speed_tests.c'}elseif($TestPq1){'tests/pq1_tests.c'}elseif($TestKq1){'tests/kq1_tests.c'}elseif($TestDisplay){'tests/display_tests.c'}elseif($TestKerona){'tests/kerona_tests.c'}else{'tests/control_tests.c'};$units+=@(@{file=$testFile;page=88;rename=@('main=ui_tests_main')})}
     if($TestCloset){$units+=@(@{file='tests/closet_tests.c';page=88;rename=@('main=ui_tests_main')},@{file='tests/motion_tests.c';page=90})}
     if($TestUI){$units+=@(@{file='tests/ui_tests.c';page=88;rename=@('main=ui_tests_main')})}
     if($TestRuntime){$units+=@(
         @{file='tests/runtime_tests.c';page=88;rename=@('main=runtime_tests_main')},
-        @{file='tests/runtime_feedback_tests.c';page=89},
-        @{file='tests/parser_tests.c';page=90}
+        @{file='tests/runtime_feedback_tests.c';page=89}
     )}
     if($TestParser){$units+=@(@{file='tests/parser_tests.c';page=90})}
-    if($TestRuntime -or $TestParser){$units+=@(@{file='tests/render_tests.c';page=57})}
+    if($TestParser){$units+=@(@{file='tests/render_tests.c';page=57})}
     if($TestMotion){$units+=@(@{file='tests/motion_tests.c';page=90},@{file='tests/room_tests.c';page=94},@{file='tests/follow_tests.c';page=57})}
     if($TestInventory){$units+=@(@{file='tests/inventory_tests.c';page=57},@{file='tests/inventory_game_tests.c';page=89})}
     if($TestSound){$units+=@(@{file='tests/sound_tests.c';page=57},@{file='tests/sound_game_tests.c';page=89})}
     if($TestSave){
         if(!(Test-Path 'build/save_manifest.h')){throw 'Run tools/prepare_save_tests.py first.'}
-        $units+=@(@{file='tests/save_tests.c';page=88},@{file='tests/compatibility_tests.c';page=89})
+        $units+=@(@{file='tests/save_tests.c';page=88},@{file='tests/compatibility_tests.c';page=89},@{file='tests/save_layout_tests.c';page=89})
     }
     $headers=Get-ChildItem src -Filter '*.h' -Recurse
     if($TestVM){$headers+=Get-Item 'build/logic_manifest.h'}
@@ -93,7 +94,11 @@ try {
     foreach($unit in $units){
         $obj=Join-Path $objectDir ($unit.file.Replace('/','_').Replace('.c','.o'))
         $argsForUnit=$base+@('-c',$unit.file,'-o',$obj)
+        if($ProfileDriving -and $unit.file -eq 'tests/driving_tests.c'){$argsForUnit+='-DDRIVING_PROFILE'}
+        if($TestSave -and $unit.file -eq 'src/next/runtime_save_path.c'){$argsForUnit+='-DSAVE_PATH_TEST'}
+        if($TestLauncher -and $unit.file -in @('src/ui_test_main.c','src/next/runtime_startup.c')){$argsForUnit+='-DSTARTUP_TEST';if($unit.file -eq 'src/next/runtime_startup.c'){$argsForUnit+='-Dstartup_test=bank_startup_test'}}
         if($unit.file -eq 'src/agi/view.c'){$argsForUnit+='-DVIEW_RESOURCE_CACHE'}
+        if($unit.file -eq 'src/agi/logic.c' -and !$TestVM){$argsForUnit+='-DAGI_RUNTIME'}
         if($unit.file -eq 'src/next/platform.c' -and !$TestVM){$argsForUnit+='-DBANKED_PLATFORM'}
         if($unit.page){
             $bank=[int][Math]::Floor($unit.page/2)
@@ -114,7 +119,9 @@ try {
                 @($headers | Where-Object LastWriteTimeUtc -gt $stamp).Count -gt 0 -or
                 (Get-Content "$obj.args" -Raw) -cne $fingerprint
             if($unit.file -eq 'tests/runtime_tests.c'){$needs=$needs -or (Get-Item 'build/runtime_manifest.h').LastWriteTimeUtc -gt $stamp}
-            if($unit.file -eq 'tests/save_tests.c'){$needs=$needs -or (Get-Item 'build/save_manifest.h').LastWriteTimeUtc -gt $stamp}
+            if($unit.file -in @('tests/save_tests.c','tests/save_layout_tests.c')){$needs=$needs -or (Get-Item 'build/save_manifest.h').LastWriteTimeUtc -gt $stamp}
+            if($unit.file -eq 'tests/pq1_tests.c'){$needs=$needs -or (Get-Item 'tests/brush_cases.h').LastWriteTimeUtc -gt $stamp}
+            if($unit.file -in @('src/runtime_main.c','tests/speed_tests.c')){$needs=$needs -or (Get-Item 'src/next/pacing.inc').LastWriteTimeUtc -gt $stamp}
         }
         if($needs){
             Write-Host "Compiling $($unit.file)"
@@ -126,6 +133,12 @@ try {
     }
     if($TestKerona){$variant='kerona-tests'}
     if($TestDisplay){$variant='display-tests'}
+    if($TestKq1){$variant='kq1-tests'}
+    if($TestPq1){$variant='pq1-tests'}
+    if($TestSpeed){$variant='speed-tests'}
+    if($TestLauncher){$variant='launcher-tests'}
+    if($TestDriving){$variant='driving-tests'}
+    if($ProfileDriving){$variant='driving-profile'}
     $output="build/$variant"
     $link=$base+@('-subtype=nex','-startup=0','-pragma-define:CRT_ORG_CODE=40960','-pragma-define:REGISTER_SP=65280','-pragma-define:CRT_STACK_SIZE=1024','-pragma-define:CRT_ENABLE_EIDI=0')
     foreach($bank in $banks | ForEach-Object { [pscustomobject]$_ } | Sort-Object page -Unique){$link+="-pragma-define:CRT_ORG_$($bank.section)=32768"}

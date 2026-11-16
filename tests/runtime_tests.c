@@ -16,7 +16,6 @@ static char directory[32];
 static rt_actor a;
 static resource_cache_info info;
 extern uint8_t runtime_feedback_tests(void);
-extern uint8_t parser_tests(void);
 static void log_line(const char *s) { uint16_t n=strlen(s); if(esx_f_write(log_file,(void *)s,n)!=n) for(;;){} }
 static void check(uint8_t ok,const char *name) { ++checks; if(!ok) ++failures; sprintf(report,"%s %s\n",ok?"PASS":"FAIL",name); log_line(report); }
 static uint8_t command(uint8_t op,uint8_t x,uint8_t y,uint8_t z,uint8_t q,uint8_t w) {
@@ -174,7 +173,8 @@ int main(void) {
     check(i&64,"graphics transitions, dialogue wrapping and pixel restoration");
     check(i&128,"full SQ1 intro loop clears story text before credits");
     game();
-    check(parser_tests(),"parser and opening-room commands");
+    /* Parser/render regressions have their own -TestParser image. Keeping
+       both suites' resident state here exceeds the reserved IM2 boundary. */
     next_clock_start();start=next_clock();while(next_clock()==start && ++spins<100000UL){} intrinsic_di();
     check(spins<100000UL,"resident IM2 timer runs while test code is banked");
     for(i=0;i<16;++i)if(((uint8_t *)0xfb00)[i]!=0xa5)guard=0;

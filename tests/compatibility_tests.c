@@ -6,6 +6,7 @@
 #include "next/save.h"
 static uint8_t file,failures;
 extern void rt_host_key(uint8_t);
+extern uint8_t bank_save_layout_tests(void);
 static void log_state(const char *game,uint16_t cycle,uint8_t r) {
     sprintf(rt_buffer,"%s cycle=%u result=%u room=%u ui=%u control=%u logic=%u pc=%u opcode=%02X test=%u\n",game,cycle,(unsigned)r,(unsigned)rt_vm.vars[0],(unsigned)rt.ui,(unsigned)rt.player_control,(unsigned)rt_vm.logic,rt_vm.pc,(unsigned)rt_vm.opcode,(unsigned)rt_vm.is_test);
     esx_f_write(file,rt_buffer,strlen(rt_buffer));esx_f_sync(file);
@@ -89,6 +90,7 @@ static void game(const char *name) {
 }
 uint8_t bank_compatibility_tests(void) {
     char path[48];strcpy(path,"build/compatibility-tests.txt");file=esx_f_open(path,ESX_MODE_WRITE|ESX_MODE_OPEN_CREAT_TRUNC);failures=0;
+    if(!bank_save_layout_tests())++failures;
     game("kq1");game("pq1");game("sq1");sq1_screens();
     sprintf(rt_buffer,"SUMMARY failures=%u\n",(unsigned)failures);esx_f_write(file,rt_buffer,strlen(rt_buffer));esx_f_close(file);return !failures;
 }

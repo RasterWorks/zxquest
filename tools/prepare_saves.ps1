@@ -1,4 +1,4 @@
-param([string]$SdRoot=(Split-Path $PSScriptRoot -Parent),[string]$GameDirectory='games/sq1')
+param([string]$SdRoot=(Split-Path $PSScriptRoot -Parent),[string]$GameDirectory='games/sq1',[switch]$PassThru)
 $ErrorActionPreference='Stop'
 # CSpect's folder-backed F_MKDIR can report success without creating a folder.
 # Prepare this on the host; real NextZXOS can also create it in the interpreter.
@@ -13,5 +13,24 @@ foreach($name in @('LOGDIR','PICDIR','VIEWDIR','SNDDIR','OBJECT','WORDS.TOK')) {
     }
 }
 $identity='{0:X8}' -f ($crc -bxor 4294967295)
-New-Item -ItemType Directory -Force -Path (Join-Path $SdRoot "saves/$identity") | Out-Null
-Write-Host "Save folder: saves/$identity"
+$gameRoot=[IO.Path]::GetFullPath((Join-Path $SdRoot $GameDirectory))
+$saveFolder=Join-Path $gameRoot 'saves'
+New-Item -ItemType Directory -Force -Path $saveFolder | Out-Null
+# Import whole pairs only into empty slots. Never mix an older legacy copy
+# with a newer flat slot, and leave all legacy originals available as backups.
+$legacy=@((Join-Path $saveFolder $identity),(Join-Path $SdRoot "saves/$identity")) | Select-Object -Unique
+foreach($slot in 1..9){
+    if((Test-Path -LiteralPath "$saveFolder/$slot.a") -or (Test-Path -LiteralPath "$saveFolder/$slot.b")){continue}
+    foreach($folder in $legacy){
+        $pair=@('a','b') | ForEach-Object {Join-Path $folder "$slot.$_"} | Where-Object {Test-Path -LiteralPath $_ -PathType Leaf}
+        if(!$pair){continue}
+        foreach($source in $pair){
+            $destination=Join-Path $saveFolder (Split-Path $source -Leaf)
+            Copy-Item -LiteralPath $source -Destination $destination
+            if((Get-FileHash -LiteralPath $source).Hash -ne (Get-FileHash -LiteralPath $destination).Hash){throw "Save copy verification failed: $destination"}
+        }
+        break
+    }
+}
+Write-Host "Save folder: $saveFolder"
+if($PassThru){[PSCustomObject]@{Directory=$saveFolder;Identity=$identity}}

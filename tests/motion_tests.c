@@ -121,10 +121,16 @@ static void stamps(void) {
     check((agi_pixel_get(100u*160+100)&15)==15,"permanent stamp does not bake existing actors into background");
     agi_pixel_write(80u*160+50,15,7);next_scene_restore(50,80,1,1);
     check((agi_pixel_get(80u*160+50)&15)==2,"scene restoration retains permanent stamp");
-    reset();pixel(50,75,3);pixel(50,77,1);p[6]=0;r=rt_command(&rt_vm,0x7a,p);
-    check(!r&&(agi_pixel_get(73u*160+50)>>4)==0&&(agi_pixel_get(80u*160+50)>>4)==0,"stamp control margin spans baseline priority band");
+    reset();pixel(50,75,3);pixel(50,77,1);p[0]=1;p[6]=0;r=rt_command(&rt_vm,0x7a,p);
+    check(!r&&(agi_pixel_get(72u*160+50)>>4)==0&&(agi_pixel_get(80u*160+50)>>4)==0,"stamp includes first row of priority band");
     check((agi_pixel_get(75u*160+50)>>4)==3&&(agi_pixel_get(77u*160+50)>>4)==1,"stamp margin preserves existing water and control lines");
     seed(0,49,76,3,1);r=rt_actor_tick();check(!r&&at(0,49,76),"stamped control margin participates in movement collision");
+    reset();p[0]=2;p[4]=84;r=rt_command(&rt_vm,0x7a,p);
+    check(!r&&(agi_pixel_get(84u*160+50)>>4)==0&&(agi_pixel_get(83u*160+50)>>4)==4&&(agi_pixel_get(85u*160+50)>>4)==4,"one-pixel stamp stays on baseline at band edge");
+    reset();p[0]=1;p[4]=47;r=rt_command(&rt_vm,0x7a,p);
+    check(!r&&(agi_pixel_get(35u*160+50)>>4)==0&&(agi_pixel_get(47u*160+50)>>4)==0,"stamp covers merged priority-four band");
+    reset();p[0]=2;p[4]=80;r=rt_command(&rt_vm,0x7a,p);
+    check(!r&&(agi_pixel_get(80u*160+50)>>4)==0&&(agi_pixel_get(72u*160+50)>>4)==4&&(agi_pixel_get(79u*160+50)>>4)==4,"short cel clips stamp margin");
     p[3]=60;p[4]=90;p[5]=0;p[6]=4;
     for(i=0;i<7;++i){rt_vm.vars[210+i]=p[i];p[i]=210+i;}
     r=rt_command(&rt_vm,0x7b,p);

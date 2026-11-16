@@ -53,7 +53,7 @@ uint8_t rt_init(const char *directory) {
     return VM_DONE;
 }
 void rt_key(uint8_t ascii,uint8_t scan) {
-    uint8_t i,controller;
+    uint8_t i,controller,bound,kq=!strcmp(rt.game_id,"KQ1");
     if(rt.ui) { rt.error=rt_ui_key(ascii,scan); return; }
     rt.key_pending=ascii ? ascii : 1;
     /* A script can poll have.key inside one long-running LOGIC scan. */
@@ -66,7 +66,10 @@ void rt_key(uint8_t ascii,uint8_t scan) {
         if(controller) {rt_joystick_owned=0;rt_vm.vars[6]=rt_vm.vars[6]==controller ? 0 : controller;}
     }
     for(i=0;i<rt.key_count;++i) {
-        if(rt.keys[i].ascii==ascii && rt.keys[i].scan==scan) {
+        bound=rt.keys[i].ascii;
+        /* Translate bindings at dispatch so existing saves keep working. */
+        if(kq && !rt.keys[i].scan){if(bound=='=')bound=';';else if(bound=='-')bound=',';else if(bound=='0')bound='.';}
+        if(bound==ascii && rt.keys[i].scan==scan) {
             controller=rt.keys[i].controller; rt.pending[controller>>3]|=1u<<(controller&7);return;
         }
     }
@@ -163,6 +166,7 @@ uint8_t rt_command(agi_vm *v,uint8_t op,const uint8_t *p) {
     case 0x95: rt.trace_enabled=1; return VM_DONE;
     case 0x96: rt.trace_logic=a; rt.trace_top=b; rt.trace_height=p[2]; return VM_DONE;
     case 0x97: case 0x98: return rt_text_command(op,p);
+    case 0x9a: return rt_text_command(op,p);
     case 0x7a: case 0x7b: case 0x93: case 0x94: return rt_actor_command(op,p);
     case 0xa3: case 0xa4: return VM_DONE; /* text uses its own overlay, no dialogue resource */
     default: return VM_UNSUPPORTED;

@@ -34,6 +34,8 @@ uint8_t rt_picture(uint8_t id,uint8_t overlay) {
     resource_release(h);
     if(!r) {
         if(!overlay) agi_picture_clear();
+        /* overlay.pic edits the clean scene, never the composited actors. */
+        else if(rt.picture_valid)next_scene_restore(0,0,160,168);
         ZXN_WRITE_REG(0x53,63); r=agi_picture_decode((const uint8_t *)0x6000,size);
     }
     ZXN_WRITE_REG(0x53,saved);

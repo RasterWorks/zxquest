@@ -7,6 +7,7 @@
 #include "logic_resource.h"
 #define ENTER(page) uint8_t saved=ZXN_READ_REG(0x54); ZXN_WRITE_REG(0x54,page)
 #define LEAVE() ZXN_WRITE_REG(0x54,saved)
+#ifndef BANKED_VM_ONLY
 extern uint8_t bank_next_key_decode(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t,uint8_t);
 uint8_t next_key_decode(uint8_t k,uint8_t a,uint8_t e,uint8_t l,uint8_t r,uint8_t x){uint8_t v;ENTER(52);v=bank_next_key_decode(k,a,e,l,r,x);LEAVE();return v;}
 extern void bank_next_key_reset(void);
@@ -21,6 +22,7 @@ extern void bank_next_menu_restore(uint8_t,uint8_t,uint8_t *);
 void next_menu_restore(uint8_t first,uint8_t last,uint8_t *scratch){ENTER(55);bank_next_menu_restore(first,last,scratch);LEAVE();}
 extern void bank_rt_key_labels(char *,uint16_t);
 void rt_key_labels(char *out,uint16_t capacity){ENTER(51);bank_rt_key_labels(out,capacity);LEAVE();}
+#endif
 
 extern void bank_agi_vm_init(agi_vm *,const agi_logic_io *,agi_command_fn,agi_test_fn);
 extern void bank_agi_vm_stop(agi_vm *);
@@ -73,6 +75,8 @@ void resource_cache_status(resource_cache_info *info){ENTER(53);bank_resource_ca
 #ifndef BANKED_VM_ONLY
 #include "runtime.h"
 #include "sound.h"
+extern uint8_t bank_rt_save_path(uint8_t,uint8_t,uint32_t,char *);
+uint8_t rt_save_path(uint8_t slot,uint8_t restore,uint32_t identity,char *path){uint8_t r;ENTER(95);r=bank_rt_save_path(slot,restore,identity,path);LEAVE();return r;}
 extern uint8_t bank_rt_control(uint8_t,uint8_t,uint8_t);
 uint8_t rt_control(uint8_t op,uint8_t key,uint8_t scan){uint8_t r;ENTER(95);r=bank_rt_control(op,key,scan);LEAVE();return r;}
 extern uint8_t bank_rt_control_apply(void);
@@ -179,7 +183,7 @@ uint8_t rt_save_slot(uint8_t slot,uint8_t restore) { uint8_t r;ENTER(92);r=bank_
 uint8_t rt_save_description(uint8_t slot,char *out) { uint8_t r;ENTER(92);r=bank_rt_save_description(slot,out);LEAVE();return r; }
 uint8_t rt_save_ui(uint8_t op,uint8_t a,uint8_t s) { uint8_t r;ENTER(51);r=bank_rt_save_ui(op,a,s);LEAVE();return r; }
 void rt_parser_reset_input(void) { ENTER(56);bank_rt_parser_reset_input();LEAVE(); }
-uint8_t rt_startup(void) { uint8_t r;ENTER(51);r=bank_rt_startup();LEAVE();return r; }
+uint8_t rt_startup(void) { uint8_t r;ENTER(92);r=bank_rt_startup();LEAVE();return r; }
 extern void bank_next_screen_clear(uint8_t);
 extern void bank_next_agi_char(uint8_t,uint8_t,uint8_t,uint8_t,uint8_t);
 void next_screen_clear(uint8_t c) { ENTER(55); bank_next_screen_clear(c); LEAVE(); }

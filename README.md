@@ -8,8 +8,8 @@ separate files. Target: a base 1 MB Next running NextZXOS at 28 MHz; no Pi requi
 
 **Space Quest I has been played through to the ending on real Next hardware.**
 That playthrough scored 184/202, so optional paths still need testing. King's
-Quest I and Police Quest I have passed automated startup, movement, LOOK and
-save/restore checks, but have not yet had full manual playthroughs. Use the
+Quest I has also been completed on real Next hardware after the condor fix.
+Police Quest I hardware testing is in progress, including driving. Use the
 original DOS/EGA AGI versions, not later SCI or VGA remakes.
 
 The interpreter supports graphics, animation, collision, room transitions,
@@ -19,6 +19,8 @@ testing preview, not a claim of complete compatibility with every AGI game.
 **Original Sierra game files are not included.** Supply your own copies.
 [Hardware installation and testing](docs/testing.md) explains setup, controls
 and useful bug reports. See [CONTRIBUTING.md](CONTRIBUTING.md) to help test or develop.
+See the [change and test summary](docs/changelog.md) and
+[known issues](docs/known-issues.md) for the current preview's status.
 
 ## Licence and attribution
 
@@ -38,6 +40,8 @@ source under the GPL; public releases should provide both archives together.
 ```powershell
 .\build.ps1 -Runtime
 .\run.ps1 -Runtime
+# Show the game picker (writes AUTO to ZXQUEST.CFG):
+.\run.ps1 -Runtime -SelectGame
 # Same executable, different original AGI game files:
 .\run.ps1 -Runtime -Game kq1
 .\run.ps1 -Runtime -Game pq1
@@ -49,12 +53,36 @@ source under the GPL; public releases should provide both archives together.
 .\run.ps1
 ```
 
+On the Next, place `ZXQUEST.NEX` beside folders containing your original AGI
+game files. A single game loads automatically; with several, use **Up/Down**
+and **Enter** to choose. Folders under `games/` are also searched. For example:
+
+```text
+ZXQUEST/
+  ZXQUEST.NEX
+  SQ1/  (LOGDIR, PICDIR, VIEWDIR, SNDDIR, OBJECT, WORDS.TOK, VOL.*)
+  KQ1/  (original game files)
+  PQ1/  (original game files)
+```
+
+Saves live directly in each game's `saves` folder, for example `SQ1/saves/1.a`
+and `1.b`. Keep both copies. Old fingerprint-named folders remain readable;
+new saves use the simpler layout. The game identity is checked inside each file.
+A valid `ZXQUEST.CFG` beside the NEX explicitly selects a game; use `AUTO`
+or remove it to enable discovery. Use `.` when the original files sit beside
+the NEX. A stale CFG path falls back to discovery. Explicit `-Game` emulator
+launches and the picker now use the same per-game save folder.
+
 On the Next, **Break** opens/closes menus or cancels, and **INV VIDEO** opens
 Inventory. Hold **Edit + 1-9, 0** for Sierra F1-F10; labels **E1-E0** mean these
 Edit shortcuts. **E5** saves, **E7** restores, **E9** restarts (confirmation),
 and **Edit + Q/J** selects Quit/Joystick. Edit alone is only a modifier.
 
-**Arrow keys** move Roger or navigate menus and save slots. Two perpendicular
+In King's Quest I, **;** swims, **,** ducks and **.** jumps. These bindings
+also work after restoring older ZXQuest saves. Break opens the menu and pauses
+gameplay; the Pause menu item provides the separate pause dialog.
+
+**Arrow keys** move the player character or navigate menus and save slots. Two perpendicular
 arrows choose a diagonal. Press the same direction again to stop. Staggered
 releases retain the chosen diagonal; release all arrows before a new press.
 Opposing arrows cancel that axis. **Enter** selects/submits/dismisses;
@@ -71,6 +99,15 @@ Save/Restore offers nine vertical slots. Up/Down chooses a slot. Saving accepts
 a description of up to 31 characters before confirmation; the centred
 Saving notice remains until the write has been verified. Saves are kept
 outside the original game data and are not Sierra DOS saves.
+Unused slots can still show `[Unavailable]` on Next hardware even though saving
+and restoring through them works. This label issue remains open for correction.
+
+The game's Speed menu controls pacing at the normal 28 MHz CPU speed.
+Fastest adds no wait, Fast targets up to 10 updates/second, and Normal targets
+up to 5 with at least one 20 ms idle frame. Slow adds at least 200 ms of idle
+time after each update, even in busy rooms. Actual rates depend on scene
+complexity. Movement distances, collision
+checks and animation cycles are unchanged; music continues during pacing waits.
 
 Scripts default to `C:\z88dk` and `C:\cspect\CSpect.exe`. Override with
 `-Z88dkRoot` or `-CSpectPath`. The build sets PATH and ZCCCFG only for its

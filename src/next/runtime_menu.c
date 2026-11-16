@@ -13,23 +13,32 @@ static uint8_t label_length(char *shortcut) {
     return n;
 }
 uint8_t rt_menu_draw(uint8_t *rows) {
-    uint8_t i,j,n,label=0,keys=0,width=0,col=1,x=0,row=2,r=0,count=0;
+    uint8_t i,j,n,label=0,keys=0,width=0,col=1,x=0,row=2,r=0,count=0,gap=2;
+    uint16_t total=0;
     uint8_t fg=rt.fg,bg=rt.bg,changed=*rows==2 || previous_menu!=rt.menu_selected;
     char *shortcut,line[41];
+    /* Fit authored headings without truncating the last menu. Keep the
+       existing inset and spacing when they fit (SQ1/PQ1). */
+    for(i=0;i<rt.menu_count;++i){
+        r=rt_format(rt.menus[i].logic,rt.menus[i].message,rt_buffer,sizeof(rt_buffer));if(r)goto done;
+        total+=label_length(0);
+    }
+    if(total+2*(rt.menu_count-1)+1>40)col=0;
+    if(total+2*(rt.menu_count-1)>40)gap=1;
     if(changed && *rows>2)next_menu_restore(1,*rows-1,(uint8_t *)rt_buffer);
     if(changed){rt.bg=15;strcpy(line," ");rt_text_at(0,0,line,0);}
     for(i=0;i<rt.menu_count && col<40;++i) {
         r=rt_format(rt.menus[i].logic,rt.menus[i].message,rt_buffer,sizeof(rt_buffer));if(r)goto done;
-        if(i==rt.menu_selected)x=col-1;
-        n=strlen(rt_buffer);if(n>40-col)n=40-col;
+        if(i==rt.menu_selected)x=col?col-1:0;
+        n=label_length(0);if(n>40-col)n=40-col;
         rt_buffer[n]=0;
         if(changed) {
             rt.bg=i==rt.menu_selected?0:15;rt.fg=i==rt.menu_selected?15:0;
             rt_text_at(0,col,rt_buffer,0);
             rt.bg=15;strcpy(line,"  ");
-            if(col+n<40) {line[40-col-n<2?40-col-n:2]=0;rt_text_at(0,col+n,line,0);}
+            if(col+n<40) {line[40-col-n<gap?40-col-n:gap]=0;rt_text_at(0,col+n,line,0);}
         }
-        col+=n+2;
+        col+=n+gap;
     }
     if(changed && col<40) {
         memset(line,' ',40-col);line[40-col]=0;rt.bg=15;rt_text_at(0,col,line,0);

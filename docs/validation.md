@@ -1285,3 +1285,246 @@ The final compatibility suite also completed with zero failures for KQ1, PQ1
 and SQ1 startup, movement, LOOK, save/restore and menu-controller paths, plus
 the SQ1 pod-screen dismissal and ship explosion. This is not a full-game
 KQ1/PQ1 playthrough. Completed diagnostic emulators were closed.
+
+## PQ1 police-station exterior brushes — 15 November 2026
+
+The reported `STOP 4 LOGIC 7 OFFSET 27 OPCODE 19 TEST 0` was draw.pic
+rejecting PIC 7's F9/FA square brush (pattern code 0x15, size 5). The resource
+is 3,123 bytes and fits the picture-input bank; this was missing decoder
+functionality, not a corrupt resource or the recent speed setting.
+
+The picture decoder now implements solid/textured circle and square brushes
+at all eight sizes, using Sarien's AGI pattern tables and placement semantics.
+Footprints are clipped at screen edges; malformed coordinate pairs still
+return a truncation error. Colour and priority use the existing drawing mask.
+
+The PQ1 harness adds 128 independently expanded brush footprint expectations,
+a truncated texture test, original LOGIC 7 initialization (including the
+parked-car stamps), and an audit of every available PQ1 picture. Its existing
+four-page newspaper and put-down tests remain enabled. The station exterior
+capture was visually inspected at `build/pq1-station-exterior.png` (ignored).
+
+Final checks: PQ1 19/19 (including 128 brush cases and all 71 pictures),
+KQ1 27/27, rendering 19/19 and SQ1 parser/gameplay 38/38; 103 checks, no failures.
+All banks fit, with 321 bytes free in picture/code page 51 and 506 resident
+bytes free. Production and all three SD-card NEX files have SHA-256
+`FD727369BCD6A6A9D570667D491C068569895EC8A1A36F140B7F3E7CDDC068EB`.
+Package README/checksums were refreshed; all 68 other packaged files were
+verified unchanged. Previous NEX files and packaging metadata are backed up
+in `build/pre-pq1-brush-fix/`. Real-hardware confirmation is still pending.
+
+## Automatic game discovery and picker — 15 November 2026
+
+Startup now detects AGI v2 folders beside the NEX, including the existing
+`games/<game>` layout and older per-game CFG folders. One game loads directly;
+multiple games present a sorted Up/Down/Enter picker. An explicit launch-folder
+CFG still selects a single game; `AUTO` or no CFG enables discovery. Legacy
+save anchors are retained. New packages use one NEX above the game folders.
+
+The isolated launcher harness passes 23 checks: empty/incomplete/corrupt data,
+direct-root and single-child auto-loading, three sorted games, dedicated and
+classic cursor keys, wrap-around, drawing/path integrity, actual startup with
+Down and Enter in the IRQ key queue, `games/` nesting, legacy CFG/save paths,
+long folder names, explicit/AUTO configs and the 32-game limit. The framebuffer
+capture was inspected; the playable picker was also inspected in CSpect.
+Automated host-key injection was unreliable in CSpect, so it is not claimed as
+physical-keyboard validation. Hardware confirmation remains pending.
+
+Parser 38/38 and renderer 19/19 regressions pass. Their diagnostic reporting
+buffers now share `rt_buffer` between engine calls to preserve resident space;
+the renderer's initialization path remains separate from runtime scratch.
+PowerShell scripts parse successfully, and a clean local SD package was built
+with one executable, direct game folders and game-specific saves.
+
+Production remains a base-1-MB NEX; startup code uses page 92, with its temporary
+list in page 58. Resident end is `$f6a7` (345 bytes free), page 92 has 457 bytes
+free, and no scanning runs during gameplay. SHA-256:
+`4843F408FBC1FE3978C1E8000431BBA476E0C70B5B2A0ADAFA5D4FAB58B27084`.
+
+Added the top-level `build/sd-card/ZXQUEST/ZXQUEST.NEX` and refreshed its three
+legacy per-game executable copies. All four match the production binary;
+68 other files, including resources, CFGs and saves, were verified unchanged.
+README and checksums were refreshed. Previous executables and packaging
+metadata are in `build/pre-launcher-20261115-145812/`.
+
+Reproduce the discovery harness with `python tools/prepare_launcher_tests.py`,
+then `powershell -ExecutionPolicy Bypass -File tools/build_banked.ps1 -TestLauncher`.
+Mount the project directory when running `build/launcher-tests.nex` in CSpect;
+results are written to `build/launcher-tests.txt`.
+
+## PQ1 parked-car occlusion — 15 November 2026
+
+Reproduced the report at all five cars in the original station exterior
+(LOGIC/PIC 7). The old `add.to.pic` control border began one row after the
+start of its priority band. Sonny could reach equal drawing priority before
+collision stopped him, so his sprite painted over the car. Baseline tests
+failed at Y=120/144/108/120/144, and the first patrol-car capture showed the
+visible overlap. This was border geometry, not the optimized sprite blitter.
+
+Stamp borders now include the first row of the baseline's band and are clipped
+to the cel height; priority 4's merged 0–47 band is handled explicitly. Existing
+water/control preservation is unchanged. The boundary/height semantics were
+checked against the current [ScummVM AGI sprite implementation](https://github.com/scummvm/scummvm/blob/master/engines/agi/sprite.cpp).
+The fix contains no PQ1 resource numbers or coordinates.
+
+The same five approaches now stop at Y=119/143/107/119/143 with lower priority
+than the car, and the fixed patrol-car capture was visually inspected.
+Regression results: PQ1 24/24 (including all five cars, 128 brush footprints,
+all 71 pictures and the newspaper), motion/collision 63/63, follow/wander
+54/54, original SQ1 room traversal 28/28: 169 checks with no failures.
+Small-cel clipping, a baseline exactly on a band boundary, and the merged
+priority-four band have explicit geometry checks. This is not a full replay.
+
+Production remains a 1-MB NEX with resident end `$f6a7` (345 free bytes).
+The cold stamping code adds 24 bytes to page 54, leaving 970 free; no work was
+added to normal movement/rendering. Production and all four SD-card NEX copies
+have SHA-256 `939753E1124776A409258FFF2C5C51726E512487C6B61D8B95BD0C47EDF2414A`.
+All 68 other package files were verified unchanged; README/checksums were
+refreshed. Previous binaries, baseline log and capture are retained under
+`build/pre-pq1-car-border/`.
+
+Existing saves remain compatible but include their already-built priority
+maps. After restoring an older parking-lot save, leave and re-enter the lot
+to regenerate the corrected borders. Hardware confirmation is pending.
+
+## PQ1 driving — 16 November 2026
+
+z88dk builds successfully on this machine again. The final production image
+includes independent dirty-band bounds, cached control-run priorities,
+deferred composition of hidden permanent stamps, restore-cache invalidation,
+and AGI cel placement correction at the screen edge. Game files, script light
+timings, radio text and snapshot format were not changed.
+
+Final CSpect 28 MHz checks, all passing:
+
+| Suite | Checks |
+| --- | ---: |
+| Renderer / pixel oracles / sound-memory canary | 23 |
+| Parser / original SQ1 opening | 38 |
+| Collision and movement | 63 |
+| Follow/wander and original droid | 56 |
+| Original SQ1 room traversal | 28 |
+| KQ1 condor, navigation, text and overlays | 27 |
+| PQ1 newspaper, parked cars and all 71 pictures | 24 |
+| Sound / IRQ / gameplay coexistence | 41 |
+| All 50 original SQ1 sound durations / CPU budget | 2 |
+| Save/restore, including failure atomicity | 46 |
+| Driving save, map labels, edge turns, radio and sixteen routes | 18 |
+| **Total** | **366** |
+
+The separate three-game compatibility run also reports zero failures, including
+SQ1 escape-pod dismissal and timed explosion. The save suite was prepared fresh
+before its final run; reuse of the previous diagnostic slots produced five
+fixture-dependent failures, retained in `build/pre-pq1-driving/save-stale-fixtures.txt`.
+The untouched player snapshots were used only via the isolated driving mount.
+
+The final full sound-stream canary check passes, as does actual IRQ playback
+during graphics, menus, resource loading and movement. Renderer
+scratch stays below sound's page-91 `$6600` allocation; its control-run cache
+uses the unused tail of picture page 35. See `docs/view-rendering.md`.
+
+The legacy combined runtime test exceeded resident space when linked with
+the expanded renderer tests. `-TestRuntime` now builds its core/UI tests alone;
+`-TestParser` supplies the separately tested parser/render suite. The separated
+core/UI image was link-checked in this pass, not replayed. Production itself
+fits all banks and ends at `$f6a8`, leaving 344 bytes before reserved IM2/stack.
+
+Performance evidence and limitations are in `docs/performance.md`. Initial
+diagnostic versus final: supplied-save driving CPU work down 28–34%, cafe
+initialization roughly 13.7 to 6.8 emulated seconds, and 280 traffic updates
+5,098 to 2,721 frames. The same-row microbenchmark has a small bookkeeping
+regression; these are not whole-game FPS or hardware measurements.
+
+Production and all four top-level/per-game SD-card NEX copies match SHA-256
+`08F8DB423936F07716551660F4482F3C9022AE04FFAE65C42CCD84164A8BF770`.
+README/checksums were refreshed; all 76 other package files were verified
+unchanged. Previous executables and package metadata are backed up under
+`build/pre-pq1-driving/sd-package/`. Copy the NEX files for hardware testing;
+keep any newer saves on the physical SD card. Restore Ccarrols and drive in
+both directions. Cars already stranded inside an old snapshot may require
+leaving and re-entering that map to regenerate traffic.
+
+Map labels cleared correctly in the tested restore and cafe-parking paths;
+the user's specific stale-label case remains unreproduced. Original LOGIC 96
+also explains the pre-accident 10-98 wording: its en-route branch tests V92=199,
+not V92<199. No speculative game-specific workaround was applied.
+
+## Flat game/save folders — 16 November 2026
+
+New snapshots live directly in the resource folder's `saves` directory. The
+picker, explicit CFG and direct launch share that location. Legacy hashed
+folders remain readable only when the flat slot is absent; writes reject a
+foreign-game header. A stale CFG now falls back to discovery, supporting game
+files moved beside a per-game NEX. Snapshot format and payload are unchanged.
+
+Validation passed: 46 save/restore checks, 16 save-location/recovery checks,
+24 discovery/launcher checks, and eight host-migration checks. The separate
+SQ1/KQ1/PQ1 opening/save/menu/restore compatibility run reports zero failures.
+Host checks cover repeated migration, pair preservation, source precedence and
+unchanged originals. A fresh package contains flat resource and save folders.
+
+The existing SD bundle was backed up to `build/pre-flat-saves/`, then its 44
+snapshot files were moved into each game's plain `saves` folder. All original
+resources and snapshots were verified byte-identical. Per-game CFGs now contain
+`.`. All four NEX copies match production SHA-256
+`2056D785F580193E587545C1CB2837EB6FAAF0E76A2F1A2A58DEF4C2120A52F6`.
+Production ends at `$f6fd` (259 bytes before IM2/stack); pages 92/95 have
+482/1,878 bytes free. The path lookup helper occupies page 95; no extra RAM
+banks or serialized runtime fields are required. Hardware retesting is pending.
+
+The file audit found two already-damaged SQ1 copies, `saves/2.a` and `4.a`,
+with header/CRC failures. Their bytes match the pre-migration backup and both
+`.b` companions validate. All other 42 snapshot files validate against their
+game identity and CRC. No player snapshot contents were repaired or changed.
+
+## Empty-slot labels and motorway redraw stalls — 16 November 2026
+
+Missing intermediate save directories (`ESX_EPATH`) are now classified like
+missing files; automated tests show blank labels. Other filesystem errors remain
+visible. Rendering now separates conservative actor/control dependency bounds
+from the pixels restored/uploaded, and caches control-run geometry during the
+dependency search. Original scripts, movement and snapshot format are unchanged.
+
+Final validation: 150 checks pass (render 26, parser 38, save 46, save layout
+24, focused driving 16), plus zero failures in SQ1/KQ1/PQ1 opening, movement,
+menu and save/restore integration. Renderer checks include partial/full pixel
+comparisons, untouched gaps between touching traffic lanes and dependent
+sprites, and the entire sound-stream memory guard. The empty-slot tests cover
+both dialogs and distinguish missing paths from IO/access/not-directory errors.
+
+The supplied Ccarrols save and original traffic scripts exercise room 12 and
+room 16, one map south. Room 16's 280 updates fall from 6,737 to 5,420 emulated
+frames; peak update time falls from 51 to 41 frames (1.02 to 0.82 seconds at
+28 MHz). Room 12 improves 6.6% overall. Some pauses remain, and the same-row
+microbenchmark is slightly slower. See `docs/performance.md` for the full
+comparison. The unchanged sixteen-map movement audit passed on the baseline;
+the final focused run does not repeat that audit. Hardware retesting is pending.
+
+The production image remains base 1MB, ending at `$f6fd` with 259 resident
+bytes before IM2/stack. Pages 93 and 95 retain 1,101 and 1,868 bytes free.
+All overlays fit, and production excludes the save-path error-injection hook.
+Production and the four SD-bundle NEX files share SHA-256
+`F53DB7C5DA85789E5D7FA88B3CA27F0B0461C0B291DAE973E06707FE1383FC73`.
+Only the four executables, README and checksum manifest changed in the bundle;
+all 76 other files, including 44 player snapshots, were verified unchanged.
+The previous bundle is backed up in `build/pre-driving-variance/sd-package/`.
+
+### Hardware follow-up and publication notes — 16 November 2026
+
+The user reports that unused slots **still show `[Unavailable]`** on hardware
+with the updated build, while saving to and restoring from them works. Treat
+the label issue as open for the next correction round; the automated pass above
+does not demonstrate a hardware fix. No further runtime change was made in this
+documentation/publication pass, and no new speed or hardware test pass is claimed.
+
+The [change summary](changelog.md) distinguishes the latest 150 focused checks
+from earlier broader regression runs, and [known issues](known-issues.md)
+records the remaining label and driving-performance limitations. Public source
+includes code, authored tests and tools only; original game resources, player
+saves, generated captures and local diagnostic mounts remain excluded.
+
+Publication checks: 149 public text/source files audited for excluded resource,
+save and generated-media paths, with no credential-pattern matches. Python
+sources parse, six changed PowerShell scripts parse, updated documentation
+links resolve, and `git diff --check` passes. Existing final-build test logs
+and the runtime hash above were checked again; no runtime rebuild was needed.

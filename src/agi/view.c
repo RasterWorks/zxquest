@@ -122,7 +122,8 @@ uint8_t agi_view_decode(const agi_view_source *source, const agi_view_cel *cel, 
         x=0;
         if(row) memset(pixels,cel->transparent,cel->width);
         for(;;) {
-            result=next_byte(source,&value); if(result) return result;
+            if(input_at<input_size)value=input[input_at++];
+            else {result=next_byte(source,&value);if(result)return result;}
             if(!value) break;
             run=value&15;
             if(!run || x+run > cel->width) return VIEW_BAD_RLE;
@@ -140,12 +141,73 @@ uint8_t agi_view_decode(const agi_view_source *source, const agi_view_cel *cel, 
 }
 
 typedef struct { int16_t x, top; uint8_t priority, transparent; } blit_context;
+#ifdef VIEW_RESOURCE_CACHE
+static const uint8_t *blend_source;
+static uint8_t blend_count,blend_transparent,blend_priority,blend_limit;
+/* Foreground blits use the unused tail of composite picture page 35.
+   Within one top-to-bottom cel, a control run's first normal pixel below it
+   stays unchanged until that row is reached. Reuse that priority instead of
+   scanning the same tall building column for every painted pixel. */
+#define control_end ((uint8_t *)0x6900)
+#define control_priority ((uint8_t *)0x6a00)
+static uint8_t control_cached;
+/* Common case: a row contains ordinary priorities only. Check before writing,
+   so control columns still use the complete reference algorithm below.
+   All scratch is foreground-only; preserve IX/IY and all MMU mappings. */
+static uint8_t blend_normal(uint8_t *destination) __z88dk_fastcall __naked {
+    (void)destination;
+__asm
+    push hl
+    ld a,(_blend_count)
+    ld b,a
+blend_check:
+    ld a,(hl)
+    cp 48
+    jr c,blend_control
+    inc hl
+    djnz blend_check
+    pop hl
+    ld de,(_blend_source)
+    ld a,(_blend_count)
+    ld b,a
+    ld a,(_blend_transparent)
+    ld c,a
+blend_loop:
+    ld a,(de)
+    cp c
+    jr z,blend_skip
+    ld a,(_blend_limit)
+    cp (hl)
+    jr c,blend_skip
+    ld a,(_blend_priority)
+    ld c,a
+    ld a,(de)
+    or c
+    ld (hl),a
+    ld a,(_blend_transparent)
+    ld c,a
+blend_skip:
+    inc hl
+    inc de
+    djnz blend_loop
+    ld l,1
+    ret
+blend_control:
+    pop hl
+    ld l,0
+    ret
+__endasm;
+}
+#endif
 static void blit_row(void *context, uint8_t row, const uint8_t *data, uint8_t width) {
     blit_context *b=context;
     int16_t left=b->x,right=b->x+width,y=b->top+row;
     uint16_t at, below, pixel_at;
     uint8_t n,count,packed,priority=b->priority<<4,limit=priority|15;
     uint8_t transparent=b->transparent,effective,colour,background[32],*target;
+#ifdef VIEW_RESOURCE_CACHE
+    uint8_t column,normal_y;
+#endif
     const uint8_t *source;
     if(y<0 || y>=AGI_HEIGHT) return;
     if(left<0)left=0;if(right>AGI_WIDTH)right=AGI_WIDTH;if(right<=left)return;
@@ -153,6 +215,13 @@ static void blit_row(void *context, uint8_t row, const uint8_t *data, uint8_t wi
     while(left<right) {
         n=right-left;if(n>sizeof(background))n=sizeof(background);
         agi_pixels_read(at,background,n);
+#ifdef VIEW_RESOURCE_CACHE
+        blend_source=source;blend_count=n;blend_transparent=transparent;
+        blend_priority=priority;blend_limit=limit;
+        if(blend_normal(background)) {
+            source+=n;agi_pixels_write(at,background,n);left+=n;at+=n;continue;
+        }
+#endif
         target=background;pixel_at=at;count=n;
         do {
             colour=*source++;
@@ -163,11 +232,24 @@ static void blit_row(void *context, uint8_t row, const uint8_t *data, uint8_t wi
                 if(packed>=0x30) {
                     if(packed<=limit)*target=priority|colour;
                 } else {
+#ifdef VIEW_RESOURCE_CACHE
+                    column=left+n-count;
+                    if(control_cached && y<control_end[column])effective=control_priority[column];
+                    else {
+                        normal_y=y;
+#endif
                     below=pixel_at;
                     do {
                         below+=AGI_WIDTH;
                         effective=below<AGI_PIXELS ? agi_pixel_get(below) : 0x40;
+#ifdef VIEW_RESOURCE_CACHE
+                        ++normal_y;
+#endif
                     } while(effective<0x30);
+#ifdef VIEW_RESOURCE_CACHE
+                        if(control_cached){control_end[column]=normal_y;control_priority[column]=effective;}
+                    }
+#endif
                     if(effective<=limit)*target=(packed&0xf0)|colour;
                 }
             }
@@ -179,12 +261,26 @@ static void blit_row(void *context, uint8_t row, const uint8_t *data, uint8_t wi
 uint8_t agi_view_blit(const agi_view_source *source, const agi_view_cel *cel, int16_t x, int16_t baseline, uint8_t priority) {
     blit_context context;
     uint8_t result;
+#ifdef VIEW_RESOURCE_CACHE
+    uint8_t saved;
+#endif
     if(priority>15) return VIEW_BAD_ARGUMENT;
     result=validate(source,cel); if(result) return result;
     if(x<=-255 || x>=AGI_WIDTH || baseline<0 || baseline>=AGI_HEIGHT+255) return VIEW_OK;
     context.x=x; context.top=baseline-cel->height+1;
     context.priority=priority; context.transparent=cel->transparent;
-    return agi_view_decode(source,cel,blit_row,&context);
+#ifdef VIEW_RESOURCE_CACHE
+    control_cached=source->read==next_view_read;
+    saved=ZXN_READ_REG(0x53);
+    /* Unused tail of the composite picture's last page. The picture ends
+       at $68ff; page 91's upper region belongs to interrupt-driven sound. */
+    if(control_cached){ZXN_WRITE_REG(0x53,35);memset(control_end,0,160);}
+#endif
+    result=agi_view_decode(source,cel,blit_row,&context);
+#ifdef VIEW_RESOURCE_CACHE
+    ZXN_WRITE_REG(0x53,saved);
+#endif
+    return result;
 }
 uint8_t agi_view_priority(uint8_t baseline) {
     uint8_t priority=baseline/12+1;

@@ -422,3 +422,139 @@ be misleading.
 Evidence: build/display-baseline-parser.txt, build/parser-tests.txt,
 build/render-tests.txt and build/display-tests.txt. The retained stage profile
 still identifies LOGIC execution and composition as the next speed targets.
+
+## VM, sprite processing and speed pacing — 15 November 2026
+
+Matched SQ1 parser-harness runs at emulated 28 MHz, 16 completed scans each.
+These are CPU-work measurements, excluding pacing waits and modal announcements.
+Baseline is the PQ1 newspaper build; both runs use the same harness and game
+resources. One measured frame is 20 ms. The rendering test gained independent
+pixel-oracle checks, but the timed parser scenarios are unchanged.
+
+| Scenario | Before (frames) | After (frames) | CPU-time reduction |
+| --- | ---: | ---: | ---: |
+| Opening-room idle | 115 | 96 | 16.5% |
+| Opening-room walking | 189 | 165 | 12.7% |
+| Controlled alive/idle, same actors | 144 | 124 | 13.9% |
+
+Walking VM work fell from 86 to 65 frames; total rendering fell from 89 to 84.
+This is about 14.5% higher maximum walking throughput in this scene, not a
+game-wide FPS claim. Rendering remains a substantial cost, and these changes
+do not establish a maximum achievable performance for the interpreter.
+
+Changes: in-window condition operands read directly without copying; inline
+opcode/RLE fetches; checked 16-bit branches replace long arithmetic; structural
+IF tokens handled in the dispatch loop; ineligible said tests avoid bank gates;
+valid actor cel selection uses one cached lookup. A Z80 assembly row compositor
+handles ordinary priorities, retaining the original control-column fallback.
+The pixel oracle covers every priority and transparent colour and separately
+checks control-bit preservation. Script budgets, error checking, movement
+distances and number of actor/logic updates are retained.
+
+The production foreground loop now uses `src/next/pacing.inc`: speed 0 adds no
+wait, speed 1 targets 5 clock frames (100 ms) per update, speed 2 targets 10
+(200 ms) and always leaves at least one idle frame. Higher values target
+`(speed-1)*10` frames and always leave at least 10 idle frames (200 ms).
+Thus SQ1/KQ1's slow value 4 remains slower than PQ1's slow value 3. Normal
+approximates the earlier gameplay pace; exact rates remain scene dependent.
+Fast and Fastest can coincide when a room takes longer than 100 ms to process.
+Input polling and sound interrupts continue during the non-blocking wait;
+elapsed time is passed to AGI on the next update. No saved-state layout changes.
+
+`tools/build_banked.ps1 -TestSpeed` tests wraparound, slow pacing after expensive
+work, changing speed during a pending wait, and eight complete authored-game
+updates at each setting. The fixture is deliberately light and its Fastest
+rate must not be presented as real-game FPS. Evidence: `build/speed-tests.txt`,
+`build/parser-tests.txt`, `build/render-tests.txt`; baseline and intermediate
+results are retained in `build/pre-speed-optimisation/` (ignored by Git).
+
+Final validation: 344 checks, zero failures (render 19, parser 38, pacing 13,
+VM 61, KQ1 27, PQ1 14, motion 60, follow 54, room traversal 28, UI 30).
+The core VM run also reads 101 original LOGICs and 2,137 messages. The final
+production image fits every bank and retains 506 resident bytes before the
+reserved IM2/stack area. Runtime and all three SD-card executable copies have
+SHA-256 `2DEFA6CD21A9264EA9ABDE15A9071ECF6178F750D1AD707F08FF804653ECE841`.
+Previous executables are backed up in `build/pre-speed-optimisation/`; game
+files, configuration and player saves were preserved. Real-hardware pacing
+and subjective responsiveness still need a playthrough check.
+
+## PQ1 driving and map loading — 16 November 2026
+
+CSpect at emulated 28 MHz, 50 Hz clock (20 ms per measured frame), freerun to
+remove host pacing. These totals measure CPU work, excluding the selected game
+speed's deliberate waits. The supplied Ccarrols snapshot selects Fastest.
+
+| Workload | Initial diagnostic frames | Final frames | CPU time change |
+| --- | ---: | ---: | ---: |
+| Ccarrols, 16 completed scans driving right | 406 | 294 | 27.6% less |
+| Ccarrols, 16 completed scans driving left | 411 | 271 | 34.1% less |
+| Three cars on one row, 16 redraws | 23 | 33 | 10 frames more |
+| Three cars on separate rows, 16 redraws | 180 | 48 | 73.3% less |
+| Original cafe map initialization | 687 | 342–343 | about 50% less |
+| Original traffic/light script, 280 updates | 5,098 | 2,721 | 46.6% less |
+| Rendering portion of those 280 updates | 3,292 | 893 | 72.9% less |
+
+The initial diagnostic already had deferred hidden stamps and partial band
+work. It still expanded control rays over a global union and did not cache
+control runs. It is not a pristine previous-release benchmark. Both runs use
+the same original resources, snapshot, scan counts and synthetic three-car
+positions. Restore deliberately refreshes randomness, so the restored-game
+numbers are representative runs rather than deterministic instruction traces.
+
+Per-band closure avoids unrelated building columns when cars occupy different
+lanes. It has some bookkeeping cost: the simple same-row case is 0.2 seconds
+slower across sixteen redraws. The control-run cache cuts cafe initialization
+from roughly 13.7 to 6.8 emulated seconds. The measured traffic VM cost stays
+essentially unchanged (1,650 to 1,661 frames); the main gain is composition.
+These figures are not game-wide FPS claims or hardware timing measurements.
+
+Light transitions still occur at the authored update counts (long phase 255;
+short phases 10/5). At Normal's 200 ms pacing, an uncongested long phase can
+still take about 51 seconds. Fast/Fastest expose more of the CPU savings.
+No light counters, movement distances or original game files were changed.
+
+Evidence: `build/pre-pq1-driving/driving-tests.txt` and
+`build/driving-sd/build/driving-tests.txt`. The final sixteen-map route audit
+passes alongside the synthetic edge-turn check; intentional red-light and
+stop.update waits are excluded from the stuck-car detector. See
+`docs/pq1-driving-investigation.md` for the radio and map-label findings.
+
+### Follow-up: motorway traffic and light-change stalls
+
+The user reported severe slowdowns with traffic spread out on the map south
+of Ccarrols. A matched 28 MHz diagnostic now runs 280 authored updates on
+both room 12 and room 16, including their traffic-light changes. Baseline is
+the shipped flat-save-folder build, not the earlier initial diagnostic above.
+
+| Workload | Baseline frames | Updated frames | CPU time change |
+| --- | ---: | ---: | ---: |
+| Room 12, 280 updates | 2,725 | 2,544 | 6.6% less |
+| Room 16, 280 updates | 6,737 | 5,420 | 19.5% less |
+| Room 16 rendering portion | 4,231 | 2,904 | 31.4% less |
+| Room 12 worst update | 36 | 29 | 19.4% less |
+| Room 16 worst update | 51 | 41 | 19.6% less |
+| Room 16 light change at update 255 | 43 | 34 | 20.9% less |
+| Three cars on separate rows, 16 redraws | 48 | 37 | 22.9% less |
+| Three cars on one row, 16 redraws | 33 | 41 | 8 frames more |
+
+Dependency search now selects sprites without repainting the unchanged
+background along their control rays. Exact per-row painting bounds reduce
+uploads, and a temporary control-run geometry cache avoids repeated scans.
+The same-row microbenchmark incurs another 0.16 seconds across 16 redraws;
+the original driving workloads improve overall. Cafe initialization is
+unchanged at approximately 343 frames. Restored Ccarrols runs also improved
+from 294/272 to 244/240 frames for 16 right/left scans, but restore refreshes
+randomness, so those are representative rather than deterministic comparisons.
+
+These are emulated CPU timings, excluding deliberate pacing and host speed.
+The worst motorway update still takes about 0.82 seconds at 28 MHz; this
+reduces the reported stalls but does not eliminate them. Room 16 VM work is
+essentially unchanged (2,323 to 2,322 frames), and dependency-search work
+remains significant. Light counters, car movement and original resources are
+unchanged. Hardware responsiveness still needs confirmation.
+
+Evidence: `build/pre-driving-variance/baseline-driving-tests.txt` and
+`build/driving-final-sd/build/driving-tests.txt`. Earlier narrower-search
+experiments were slower and were not packaged. `-ProfileDriving` runs the
+focused 16-check workload; `-TestDriving` also runs dispatch and the full
+sixteen-map route audit.

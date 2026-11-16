@@ -75,7 +75,8 @@ static uint8_t format_text(uint8_t logic,uint8_t message,char *out,uint16_t capa
             continue;
         }
         c=raw[at++];
-        if(c=='%') {
+        if(c=='\\' && at<n)c=raw[at++];
+        else if(c=='%') {
             if(at==n)return VM_MESSAGE;type=raw[at++];
             if(type=='%')c='%';
             else {
@@ -222,6 +223,14 @@ uint8_t rt_text_command(uint8_t op,const uint8_t *p) {
     case 0x69:
         if(rt.dirty && rt.gfx){r=rt_actor_render();if(r)return r;}
         clear_lines(a,b,c,1); return VM_DONE;
+    case 0x9a:
+        /* Inclusive character rectangle; Sierra treats any nonzero colour
+           as white. Keep cleared cells in text backing for later redraws. */
+        if(a>=25 || b>=40 || a>c || b>p[3])return VM_DONE;
+        if(rt.dirty && rt.gfx){r=rt_actor_render();if(r)return r;}
+        if(c>24)c=24;i=p[3]>39?39:p[3];bg=rt.bg;rt.bg=p[4]?15:0;
+        for(;a<=c;++a)for(r=b;r<=i;++r)cell(a,r,' ',1);
+        rt.bg=bg;return VM_DONE;
     case 0x6a:
         rt.key=rt.key_pending=0;
         rt.gfx=0; rt_parser_invalidate_display();

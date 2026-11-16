@@ -141,7 +141,7 @@ static uint8_t droid_script(void) {
     return r;
 }
 static void original_droid(void) {
-    char path[16];uint8_t r,x;rt_actor a;
+    char path[16];uint8_t r,x,ticks;rt_actor a;
     /* Stage the original droid module's documented script state. This is
        an integration fixture, not a claim to have played to the planet. */
     strcpy(path,"games/sq1");r=rt_init(path);if(!r){reset();seed(0,100,100,1);r=cmd(0x29,0,1,0);}
@@ -150,8 +150,15 @@ static void original_droid(void) {
     agi_vm_set_flag(&rt_vm,5,0);agi_vm_set_flag(&rt_vm,97,1);agi_vm_set_flag(&rt_vm,191,1);
     rt_vm.vars[235]=2;rt_vm.vars[98]=40;rt_vm.vars[99]=100;r=droid_script();rt_actor_read(16,&a);
     check(!r&&a.view==46&&a.motion==RT_MOTION_FOLLOW&&a.target_x==10&&!agi_vm_flag(&rt_vm,235),"original LOGIC 110 spawns the droid and starts follow.ego");if(r)return;
-    x=a.x;r=rt_actor_tick();if(!r)r=rt_actor_render();rt_actor_read(16,&a);
-    check(!r&&a.x==x+1&&a.y==100&&a.direction==3,"original droid cel moves toward Roger and composites successfully");
+    check(a.ignore_blocks&ACT_REPOSITIONED,"initial droid cel placement requests AGI's one-tick movement pause");
+    x=a.x;r=rt_actor_tick();rt_actor_read(16,&a);
+    check(!r&&a.x==x&&!(a.ignore_blocks&ACT_REPOSITIONED),"droid's placement pause is consumed once");
+    /* AGI marks the stationary pause DIDNT_MOVE, so follow may choose a
+       bounded detour first. Assert eventual arrival, not the next heading. */
+    for(ticks=0;ticks<200 && !r && a.motion==RT_MOTION_FOLLOW;++ticks){r=rt_actor_tick();rt_actor_read(16,&a);}
+    if(!r)r=rt_actor_render();rt_actor_read(16,&a);
+    check(!r&&a.x>x&&!a.motion&&agi_vm_flag(&rt_vm,235),"original droid reaches Roger's follow distance and composites successfully");
+    agi_vm_set_flag(&rt_vm,235,0);
     agi_vm_set_flag(&rt_vm,102,0);agi_vm_set_flag(&rt_vm,92,1);rt_vm.vars[235]=2;
     r=droid_script();rt_actor_read(16,&a);
     check(!r&&a.motion==RT_MOTION_WANDER&&a.x==59&&a.y==73,"original droid branch switches to wander while Roger is hidden");

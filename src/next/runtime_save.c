@@ -63,10 +63,10 @@ static uint8_t identify(void) {
     identity=~crc;rt_save_identity_valid=1;return SAVE_OK;
 }
 /* Private to overlay 92. UI receives paths/headers in resident storage. */
-uint8_t save_path(uint8_t slot,char *path) {
+extern uint8_t rt_save_path(uint8_t,uint8_t,uint32_t,char *);
+static uint8_t save_path(uint8_t slot,char *path,uint8_t restore) {
     uint8_t r=identify();if(r)return r;
-    sprintf(path,"saves/%04X%04X/%u.a",(unsigned)(identity>>16),(unsigned)identity,(unsigned)slot);
-    return SAVE_OK;
+    return rt_save_path(slot,restore,identity,path);
 }
 static uint8_t header_read(uint8_t file,save_header *h) {
     struct esx_stat st;
@@ -154,10 +154,10 @@ done:
    damage the older/inactive copy. CRC covers the generation as well as state. */
 static uint8_t commit_save(char *path) {
     uint8_t ra,rb,r;uint32_t a=0,b=0,g;uint16_t end=strlen(path)-1;
-    strcpy(rt_buffer,"saves");esx_f_mkdir(rt_buffer);
     strcpy(rt_buffer,path);rt_buffer[end-3]=0;esx_f_mkdir(rt_buffer);
     ra=read_snapshot(path,0,&a);path[end]='b';rb=read_snapshot(path,0,&b);
     if(ra==SAVE_IO || rb==SAVE_IO)return SAVE_IO;
+    if(ra==SAVE_GAME || rb==SAVE_GAME)return SAVE_GAME;
     if(ra)a=0;if(rb)b=0;
     g=a>b?a:b;if(g==0xffffffffUL)return SAVE_INVALID;
     path[end]=!a || (b && b>a)?'a':'b';
@@ -180,8 +180,8 @@ static uint8_t restore_stage(char *path) {
     return r;
 }
 uint8_t rt_save_description(uint8_t slot,char *out) {
-    char path[40];save_header h;uint32_t a,b;uint8_t r,ra,rb,f;
-    r=save_path(slot,path);if(r)return r;
+    char path[128];save_header h;uint32_t a,b;uint8_t r,ra,rb,f;
+    r=save_path(slot,path,1);if(r)return r;
     ra=generation(path,&a);path[strlen(path)-1]='b';rb=generation(path,&b);
     if(ra && rb)return ra==SAVE_EMPTY?rb:ra;
     if(rb || (!ra && a>=b))path[strlen(path)-1]='a';
@@ -189,9 +189,9 @@ uint8_t rt_save_description(uint8_t slot,char *out) {
     r=header_read(f,&h);if(!r)memcpy(out,h.description,32);esx_f_close(f);return r;
 }
 uint8_t rt_save_slot(uint8_t slot,uint8_t restore) {
-    uint8_t r,saved=ZXN_READ_REG(0x53);uint16_t n,random=rt.random;uint32_t at;char path[40];
+    uint8_t r,saved=ZXN_READ_REG(0x53);uint16_t n,random=rt.random;uint32_t at;char path[128];
     if(slot<1 || slot>9)return SAVE_INVALID;
-    rt_save_phase=1;r=save_path(slot,path);if(r){rt_save_errno=errno;return r;}
+    rt_save_phase=1;r=save_path(slot,path,restore);if(r){rt_save_errno=errno;return r;}
     if(!restore){r=commit_save(path);goto done;}
     if(resource_scratch(STAGE_PAGES,stage)){r=SAVE_MEMORY;goto done;}
     r=restore_stage(path);
@@ -202,6 +202,9 @@ uint8_t rt_save_slot(uint8_t slot,uint8_t restore) {
         for(at=0;at<SAVE_BYTES;at+=n){n=chunk_size(at);stage_chunk(at,n,0);state_chunk(at,n,1);}
         /* Resource handles are session-local; never reuse serialized cel cache. */
         rt_text_mask(4,0,0,0,0);
+        /* Renderer control-column scratch is not part of a snapshot. Rebuild
+           it from this room before using dependencies from the previous one. */
+        rt.dirty|=2;
         /* Keep the live random stream moving instead of replaying the saved
            future. Clock jitter also varies restores after a fresh launch.
            Retain the serialized field for compatibility with existing saves. */

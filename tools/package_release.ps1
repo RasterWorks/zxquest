@@ -14,7 +14,7 @@ try {
     Copy-Item -LiteralPath $binary.FullName -Destination (Join-Path $runtime 'ZXQUEST.NEX')
     Copy-Item -LiteralPath 'COPYING' -Destination $runtime
     Copy-Item -LiteralPath 'docs/testing.md' -Destination (Join-Path $runtime 'README.md')
-    [IO.File]::WriteAllText((Join-Path $runtime 'ZXQUEST.CFG'),"games/sq1`r`n",[Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText((Join-Path $runtime 'ZXQUEST.CFG'),"AUTO`r`n",[Text.Encoding]::ASCII)
     # Deliberate source allowlist: never recurse over the workspace or SD bundle.
     $files=@('.gitignore','COPYING','README.md','CONTRIBUTING.md','build.ps1','run.ps1')
     foreach($directory in @('src','tests','tools','docs','.github')){

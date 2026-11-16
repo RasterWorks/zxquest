@@ -1528,3 +1528,17 @@ save and generated-media paths, with no credential-pattern matches. Python
 sources parse, six changed PowerShell scripts parse, updated documentation
 links resolve, and `git diff --check` passes. Existing final-build test logs
 and the runtime hash above were checked again; no runtime rebuild was needed.
+
+### Prebuilt interpreter publication — 16 November 2026
+
+`dist/ZXQUEST.NEX` publishes the same 131,584-byte runtime, byte-identical to
+`build/runtime.nex` and the four local SD-bundle copies. Its base-1MB NEX header
+and SHA-256 were checked against the tested build above. `dist/README.md`
+records source revision `5cfe6e31bbd044e69c8696c4ca18463de8895bdc` and
+`dist/SHA256SUMS.txt` supplies the checksum. Runtime sources are unchanged.
+
+The public download folder contains only the NEX, build/setup notes and
+checksum. No original resources or saves are added. Installation documentation
+now links to the binary and describes copying it to an SD card beside users'
+own AGI v2 game folders. This is artifact publication, not a new runtime build
+or another test run; the existing hardware issues remain open.

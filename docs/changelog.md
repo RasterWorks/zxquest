@@ -1,5 +1,13 @@
 # Changes and tests
 
+## 16 November 2026 — prebuilt SD-card download
+
+The latest tested `ZXQUEST.NEX` is now included in `dist/`, with its checksum
+and corresponding source revision. The README links directly to the binary
+and explains SD-card setup using players' own DOS/EGA AGI v2 files. No compiler
+or emulator is needed on hardware. This publishes the existing build below;
+there are no additional runtime fixes or changes to the known-issue status.
+
 ## 16 November 2026 — update since the initial public preview
 
 This update publishes the accumulated interpreter, test and tooling changes.

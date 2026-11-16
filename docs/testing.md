@@ -6,13 +6,22 @@ hardware playthrough is in progress. Other AGI games are not yet validated.
 
 ## Install
 
-1. Extract the runtime archive into a folder on your SD card.
+1. [Download the prebuilt ZXQUEST.NEX](https://github.com/RasterWorks/zxquest/raw/refs/heads/main/dist/ZXQUEST.NEX)
+   and copy it into a folder such as `ZXQUEST` on your SD card. No compilation
+   or emulator is required. If you download the repository ZIP instead, use
+   `dist/ZXQUEST.NEX` from it.
 2. Create a subfolder for each game (for example `SQ1`, `KQ1`, `PQ1`) and copy its resources into it:
    `LOGDIR`, `PICDIR`, `VIEWDIR`, `SNDDIR`, `OBJECT`, `WORDS.TOK` and every `VOL.*`.
-3. If an older archive includes `ZXQUEST.CFG`, change its contents to `AUTO`
+3. If your existing installation includes `ZXQUEST.CFG`, change its contents to `AUTO`
    or remove it to enable the picker. No configuration is required otherwise.
 4. Open the folder containing `ZXQUEST.NEX` in the NextZXOS browser and launch it.
    One game loads automatically; use Up/Down and Enter when several are found.
+
+These must be your own **DOS/EGA AGI v2** files; no games are supplied with
+the interpreter. AGI v3 and SCI/VGA remakes are not supported. The executable
+and its checksum/source revision are listed in the repository's
+[download folder](https://github.com/RasterWorks/zxquest/tree/main/dist).
+For an update, replace the NEX only and keep your game files and saves.
 
 The same executable runs all three games. Discovery also checks `games/`
 subfolders and legacy per-game folders whose CFG points to nested resources.

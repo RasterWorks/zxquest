@@ -22,6 +22,37 @@ and useful bug reports. See [CONTRIBUTING.md](CONTRIBUTING.md) to help test or d
 See the [change and test summary](docs/changelog.md) and
 [known issues](docs/known-issues.md) for the current preview's status.
 
+## Download and run on a Next
+
+**[Download ZXQUEST.NEX](https://github.com/RasterWorks/zxquest/raw/refs/heads/main/dist/ZXQUEST.NEX)**
+and copy it to a folder on your SD card. This is the latest published build;
+you do not need z88dk or an emulator to use it on hardware.
+
+1. Create a folder such as `ZXQUEST` on your SD card and put `ZXQUEST.NEX` in it.
+2. Create a subfolder for each of your own **DOS/EGA AGI v2** games. Copy that
+   game's `LOGDIR`, `PICDIR`, `VIEWDIR`, `SNDDIR`, `OBJECT`, `WORDS.TOK` and all
+   `VOL.*` files directly into its subfolder.
+3. Launch `ZXQUEST.NEX` from the NextZXOS browser. One game loads automatically;
+   with several, use **Up/Down** and **Enter** to choose.
+
+```text
+ZXQUEST/
+  ZXQUEST.NEX
+  SQ1/  (your original game files)
+  KQ1/  (your original game files)
+  PQ1/  (your original game files)
+```
+
+Use a Next with 1 MB RAM, a current core and NextZXOS. The interpreter selects
+28 MHz. No CFG is needed for this layout; set an existing CFG to `AUTO` or
+remove it to enable the picker. When updating, replace only the NEX and keep
+your game files and saves. This preview has been tested with SQ1, KQ1 and PQ1;
+other AGI v2 games need testing. AGI v3 and SCI/VGA remakes are not supported.
+
+[Build details and checksum](https://github.com/RasterWorks/zxquest/tree/main/dist)
+identify the supplied binary and corresponding source. See
+[installation, controls and testing](docs/testing.md) for more detail.
+
 ## Licence and attribution
 
 ZXQuest is distributed under the GNU General Public License version 2; see
@@ -53,17 +84,7 @@ source under the GPL; public releases should provide both archives together.
 .\run.ps1
 ```
 
-On the Next, place `ZXQUEST.NEX` beside folders containing your original AGI
-game files. A single game loads automatically; with several, use **Up/Down**
-and **Enter** to choose. Folders under `games/` are also searched. For example:
-
-```text
-ZXQUEST/
-  ZXQUEST.NEX
-  SQ1/  (LOGDIR, PICDIR, VIEWDIR, SNDDIR, OBJECT, WORDS.TOK, VOL.*)
-  KQ1/  (original game files)
-  PQ1/  (original game files)
-```
+The SD layout above also supports game folders nested under `games/`.
 
 Saves live directly in each game's `saves` folder, for example `SQ1/saves/1.a`
 and `1.b`. Keep both copies. Old fingerprint-named folders remain readable;
@@ -124,8 +145,9 @@ Keep the original game files in `games/sq1/`:
 LOGDIR PICDIR VIEWDIR SNDDIR VOL.0 VOL.1 VOL.2 WORDS.TOK OBJECT
 ```
 
-Game files and all generated outputs are ignored by Git. They are never
-embedded in the executable. CSpect mounts the project directory as its SD
+Game files and temporary build/test outputs are ignored by Git. Original
+resources are never embedded in the executable. The published NEX and its
+checksum are kept in `dist/`. CSpect mounts the project directory as its SD
 root, so no SD image or game conversion is needed for development. A real
 Next needs the same paths on its SD card; SQ1 has been completed on hardware.
 This interpreter targets AGI v2 games; SCI remakes and AGI v3 compressed resources
